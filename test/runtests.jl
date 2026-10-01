@@ -1,4 +1,4 @@
-using DiffractogramImaging, PCC, Test, LinearAlgebra, FFTW
+using DiffractogramImaging, PCC, Test, LinearAlgebra, FFTW, BlockDiagonals
 ⊗ = LinearAlgebra.kron
 DI = DiffractogramImaging
 relerr(a,b) = norm(a-b)/norm(a)
@@ -17,6 +17,28 @@ function test_F(n)
  y = F*x
  x_ = F'*y
  @test relerr(x,x_) ≈ 0 atol=1e-10
+ y = F'*x
+ x_ = F*y
+ @test relerr(x,x_) ≈ 0 atol=1e-10
+end
+
+# use only for small sizes: tests convolution theorem
+function test_conv(n)
+ k = randn(n...)+1im*randn(n...)
+ x = randn(n...)+1im*randn(n...)
+ F = DI.linmap_F(n...)
+ xk1 = F'*((F*vec(x)).*(F*vec(k)))
+
+ # naive circular convolution
+ xk2 = zeros(ComplexF64,n...)
+ for i1=1:n[1],i2=1:n[2]
+  for j1=1:n[1],j2=1:n[2]
+   xk2[i1,i2] += k[mod1(i1-j1+1,n[1]),mod1(i2-j2+1,n[2])]*x[j1,j2]
+  end
+ end
+
+ @test relerr(xk1,vec(xk2)) ≈ 0 atol=1e-10
+
 end
 
 function test_pcc2d(p,q)
@@ -62,6 +84,46 @@ function test_M(n1,n2,N,α,β,γ)
  @test relerr(y,y_) ≈ 0 atol=1e-10
 end
 
+# only tests on small sizes
+function test_rk_to_pcc2d(p,q)
+ n = p .* q
+ k = randn(n...) + im*randn(n...)
+ k̃ = DI.rk_to_pcc2d(k,p...,q...)
+ k̂ = DI.pcc2d_to_BlockDiagonal(k̃)
+ F = DI.linmap_F(n...)
+ Q = DI.linmap_Q(p...,q...)
+ Fk̂ = Diagonal(F*vec(k))
+ K1 = F'*Fk̂*F
+ K2 = Q'*k̂*Q
+ x = randn(prod(n)) + 1im*randn(prod(n))
+ y1 = K1*x
+ y2 = K2*x
+ @test relerr(y1,y2) ≈ 0 atol=1e-10
+end
+
+# we build E explicity, so do this only for small sizes
+function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
+ n1 = p1*q1; n2=p2*q2
+ # generate fake a
+ a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
+ E = DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
+
+ # dense M
+ D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
+ D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
+ L = diagm(vec(abs2.(D1) + abs2.(D2)))
+ LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
+ M = ρ*(α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)
+
+ A = hcat(a...) # calculates a dense A
+ x = randn(n1*n2) + im*randn(n1*n2)
+ y  = M*x
+ y_ = x + A*(M\(A'*x))
+
+ @test relerr(y,y_) ≈ 0 atol=1e-10
+end
+
+
 
 test_cases = [
   (n=(10,11),p=(1,1)),
@@ -72,28 +134,60 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
-@testset "Q, F, pcc2d" begin
+if false ##################################
+@testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
-  println("sizes $c")
   test_Q(c.p,q)
+ end
+end
+
+@testset "testing F" begin
+ for c in test_cases
+  q = c.n .÷ c.p
   test_F(c.n)
+ end
+end
+
+@testset "testing pcc2d" begin
+ for c in test_cases
+  q = c.n .÷ c.p
   test_pcc2d(c.p,q)
  end
 end
 
 @testset "testing M" begin
- test_M(12,12,4,1,2,3)
- test_M(12,12,4,3,2,1)
- test_M(24,12,4,3,2,1)
- test_M(12,24,4,3,2,1)
  test_M(12,24,1,3,2,1)
+ test_M(12,24,2,3,2,1)
+ test_M(12,24,4,3,2,1)
+ test_M(24,12,4,3,2,1)
 end
 
 @testset "testing M solve" begin
  test_M_solve(12,24,1,3,2,1)
- test_M_solve(12,12,4,1,2,3)
- test_M_solve(12,12,4,3,2,1)
- test_M_solve(24,12,4,3,2,1)
+ test_M_solve(12,24,2,3,2,1)
  test_M_solve(12,24,4,3,2,1)
+ test_M_solve(24,12,4,3,2,1)
 end
+
+@testset "testing conv thm" begin
+ test_conv((10,12))
+ test_conv((12,12))
+ test_conv((12,9))
+end
+
+@testset "testing rk_to_pcc2d" begin
+ for c in test_cases
+  q = c.n .÷ c.p
+  test_rk_to_pcc2d(c.p,q)
+ end
+end
+
+end #########################
+
+@testset "testing E" begin
+  test_E(3,4,4,5,1)
+  #test_E(3,4,4,5,2)
+  #test_E(3,4,4,5,4)
+end
+

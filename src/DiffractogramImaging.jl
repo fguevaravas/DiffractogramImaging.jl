@@ -46,14 +46,16 @@ module DiffractogramImaging
   function Fmul!(y,x)
    y = reshape(y,n1,n2)
    x = reshape(x,n1,n2)
-   y .= fft(x) 
+   y .= x
+   fft!(y)
   end
 
   # technically this is not the adjoint but the inverse
   function Fmulh!(y,x)
    y = reshape(y,n1,n2)
    x = reshape(x,n1,n2)
-   y .= ifft(x) 
+   y .= x
+   ifft!(y)
   end
   return LinearMap{T}(Fmul!,Fmulh!,n1*n2,n1*n2,ismutating=true)
  end
@@ -179,10 +181,29 @@ module DiffractogramImaging
   return LinearMap{ComplexF64}(amul!,amul!,N*n1*n2,N*n1*n2,ismutating=true)
  end 
 
+ """
+  Convert a regular convolution kernel to a periodic kernel
+  Inputs
+   k  n1 x n2 regular convolution kerne
+   k̃  n1 x n2 x p1 x p2 corresponding p1,p2 - periodic kernel
+ """
+ function rk_to_pcc2d(k,p1,p2,q1,q2)
+  n1,n2 = size(k)
+  @assert n1==p1*q1 && n2==p2*q2
+  k̃ = zeros(eltype(k),n1,n2,p1,p2)
+  for i1=1:p1,i2=1:p2
+    k̃[:,:,i1,i2] = circshift(k,(i1-1,i2-1))
+  end
+  return k̃
+ end
+
+ const VectorBlockDiag{T} = Vector{BlockDiagonal{T, Matrix{T}}}
+
   """
    Construct the block matrix representation of the matrix E = I + A M^{-1} A^*
   """
-  function construct_E(a::Vector{BlockDiagonal{ComplexF64}},α,β,γ,ρ,p1,p2,q1,q2)
+  function BlockDiagonal_E(a::Vector{<:BlockDiagonal{T, <:AbstractMatrix{T}}},
+                           α,β,γ,ρ,p1,p2,q1,q2) where T<:Complex
    n1 = p1*q1; n2 = p2*q2
    N = length(a) 
    @assert all(size(a[1]) .== (n1*n2,n1*n2))
@@ -191,16 +212,11 @@ module DiffractogramImaging
    ## Constructing M as PCC by blocks
    # diagonal blocks of M as PCC
    d1 = rk_periodic_derivative(1,(n1,n2))
-   d1 = rk_periodic_derivative(2,(n1,n2))
+   d2 = rk_periodic_derivative(2,(n1,n2))
 
    # put kernel for D1 as a PCC
-   D1 = zeros(n1,n2,p1,p2)
-   for i1=1:p1,i2=1:p2
-    D1[:,:,i1,i2] = circshift(d1,i1-1,i2-1)
-   end
-   for i1=1:p1,i2=1:p2
-    D2[:,:,i1,i2] = circshift(d2,i1-1,i2-1)
-   end
+   D1 = rk_to_pcc2d(d1,p1,p2,q1,q2)
+   D2 = rk_to_pcc2d(d2,p1,p2,q1,q2)
 
    # block matrix rep
    D̂1 = pcc2d_to_BlockDiagonal(D1)
@@ -217,8 +233,8 @@ module DiffractogramImaging
    ML = -β^2*I(n1*n2)
 
    # Cholesky factorization of M as a PCC
-   CD = Vector{BlockDiagonal{ComplexF64}}(undef,N)     # diagonal blocks
-   CL = Vector{BlockDiagonal{ComplexF64}}(undef,N-1)   # lower diagonal blocks
+   CD = Vector{Any}(undef,N)     # diagonal blocks
+   CL = VectorBlockDiag{T}(undef,N-1)   # lower diagonal blocks
    CD[1]=cholesky(MD)
    for i=1:N-1
     CL[i] = ML/CD[i].U
@@ -226,14 +242,16 @@ module DiffractogramImaging
    end 
 
    # since M = L L^*, we need calculate Y = M^{-1} A^* = L^-* L^-1 A^*
+    
    # multiply L^-1 A^* (forward substitution)
-   u = Vector{BlockDiagonal{ComplexF64}}(undef,N)
+   u = VectorBlockDiag{T}(undef,N)
    u[1] = CD[1].L\(a[1]')
    for i=2:N
     u[i] = CD[i].L\(a[i]' - CL[i-1]*u[i-1])
    end
+
    # multiply by L^* (backward substituion)
-   y = Vector{BlockDiagonal{ComplexF64}}(undef,N)
+   y = VectorBlockDiag{T}(undef,N)
    y[N] = CD[N].U\u[N]
    for i=N-1:-1:1
     y[i] = CD[i].U\(u[i] - CL[i]'*u[i+1])
