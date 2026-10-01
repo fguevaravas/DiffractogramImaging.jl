@@ -1,6 +1,7 @@
 module DiffractogramImaging
  using LinearMaps, FFTW, LinearAlgebra, BlockDiagonals
  ⊗ = LinearAlgebra.kron 
+ fftwComplex = FFTW.fftwComplex
  
  """
   Encapsulate the unitary (up to a constant) transformation that makes
@@ -13,20 +14,22 @@ module DiffractogramImaging
  function linmap_Q(::Type{T},p1,p2,q1,q2) where {T<:fftwComplex}
   n1 = p1*q1; n2 = p2*q2;
 
-  function Qmul!(y::Array{T,1},x::Array{T,1})
+  function Qmul!(y,x)
    x = reshape(x,p1,q1,p2,q2)
    y = reshape(y,p1,p2,q1,q2)
    x̂ = fft(x,(2,4))
    permutedims!(y,x̂,(1,3,2,4))
+   return vec(y)
   end
 
   # technically this not the adjoint but the inverse
-  function Qmulh!(x::Array{T,1},y::Array{T,1})
+  function Qmulh!(x,y)
    @assert( length(y) == n1*n2 && length(x) == n1*n2 )
    y = reshape(y,p1,p2,q1,q2)
    x = reshape(x,p1,q1,p2,q2)
    permutedims!(x,y,(1,3,2,4))
    ifft!(x,(2,4))
+   return vec(x)
   end
   return LinearMap{T}(Qmul!,Qmulh!,n1*n2,n1*n2,ismutating=true)
  end
@@ -40,17 +43,17 @@ module DiffractogramImaging
   Outputs: p1*q1 x p2*q2 LinearMap
  """
  function linmap_F(::Type{T},n1,n2) where {T<:fftwComplex}
-  function Fmul!(y::Array{T,1},x::Array{T,1})
+  function Fmul!(y,x)
    y = reshape(y,n1,n2)
    x = reshape(x,n1,n2)
-   y = fft(x) 
+   y .= fft(x) 
   end
 
   # technically this is not the adjoint but the inverse
-  function Fmulh!(y::Array{T,1},x::Array{T,1})
+  function Fmulh!(y,x)
    y = reshape(y,n1,n2)
    x = reshape(x,n1,n2)
-   y = ifft(x) 
+   y .= ifft(x) 
   end
   return LinearMap{T}(Fmul!,Fmulh!,n1*n2,n1*n2,ismutating=true)
  end
@@ -187,10 +190,10 @@ module DiffractogramImaging
 
    # put kernel for D1 as a PCC
    D1 = zeros(n1,n2,p1,p2)
-   for i1=1:p1,1:p2
+   for i1=1:p1,i2=1:p2
     D1[:,:,i1,i2] = circshift(d1,i1-1,i2-1)
    end
-   for i1=1:p1,1:p2
+   for i1=1:p1,i2=1:p2
     D2[:,:,i1,i2] = circshift(d2,i1-1,i2-1)
    end
 
@@ -245,19 +248,20 @@ module DiffractogramImaging
 
 
 
- function admm_solver()
- β=0.01; ρ=2; Niter = 100;
-X = Y; Z = 0*∂*X; λ = 0*Z
-obj       = [ objfun(X,Z) ]
-residuals = [ residual(X,Z)]
-B = [ A; ρ^(1/2)*∂]
-for j=1:Niter
-    X = F'*opDiagonal(1 ./(abs2.(vec(FK)) + ρ*vec(abs2.(FKD1)) +  ρ*vec(abs2.(FKD2))))*F*B'*[Y
-             ρ^(1/2)*(Z - λ/ρ)]
-    Z = shrink.(∂*X+λ/ρ,β/ρ)
-    λ = λ + ρ*(∂*X - Z)
-    push!(obj,objfun(X,Z))
-    push!(residuals,residual(X,Z))
-end
-
-end
+#function admm_solver()
+#β=0.01; ρ=2; Niter = 100;
+#X = Y; Z = 0*∂*X; λ = 0*Z
+#obj       = [ objfun(X,Z) ]
+#residuals = [ residual(X,Z)]
+#B = [ A; ρ^(1/2)*∂]
+#for j=1:Niter
+#    X = F'*opDiagonal(1 ./(abs2.(vec(FK)) + ρ*vec(abs2.(FKD1)) +  ρ*vec(abs2.(FKD2))))*F*B'*[Y
+#             ρ^(1/2)*(Z - λ/ρ)]
+#    Z = shrink.(∂*X+λ/ρ,β/ρ)
+#    λ = λ + ρ*(∂*X - Z)
+#    push!(obj,objfun(X,Z))
+#    push!(residuals,residual(X,Z))
+#end
+#end
+#
+end#module

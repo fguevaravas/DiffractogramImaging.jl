@@ -4,7 +4,7 @@ relerr(a,b) = norm(a-b)/norm(a)
 
 function test_Q(p,q)
  Q = DI.linmap_Q(p...,q...)
- x = randn(prod(p)*prod(q))
+ x = randn(prod(p)*prod(q)) + 1im*randn(prod(p)*prod(q))
  y = Q*x
  x_ = Q'*y
  @test relerr(x,x_) ≈ 0 atol=1e-10
@@ -12,7 +12,7 @@ end
 
 function test_F(n)
  F = DI.linmap_F(n...)
- x = randn(prod(p)*prod(q))
+ x = randn(prod(n)) + 1im*randn(prod(n))
  y = F*x
  x_ = F'*y
  @test relerr(x,x_) ≈ 0 atol=1e-10
@@ -26,10 +26,10 @@ function test_pcc2d(p,q)
  K = Q'*k̂*Q
 
  x = randn(n...) + im*randn(n...)
- y = K*x
+ y = K*vec(x)
 
  k̂_ = pcc2d_gemv_blkm_prep(k)
- y_ = pcc2d_gemv_blkm(x,k̂_)
+ y_ = vec(pcc2d_gemv_blkm(x,k̂_))
  @test relerr(y,y_) ≈ 0 atol=1e-10
 end
 
