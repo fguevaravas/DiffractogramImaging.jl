@@ -97,7 +97,7 @@ module DiffractogramImaging
 
 
  """
-  block tridiagonal symmetric real matrix M/ρ representation using I ⊗ F
+  block tridiagonal symmetric real matrix 𝐌 = M/ρ representation using I ⊗ F
   in this basis, each block is a diagonal matrix of size n1*n2 x n1*n2
 
   returns a n1 * n2 * N linear map corresponding to:
@@ -110,7 +110,7 @@ module DiffractogramImaging
   L = vec(abs2.(D1) + abs2.(D2))
 
   # diagonal blocks are all copies of
-  d = α^2*L + 2β^2 + γ^2
+  d = α^2*L .+ (2β^2 + γ^2)
 
   # lower diagonal blocks are not stored, since they are just
   # multiplication by -β^2
@@ -118,18 +118,21 @@ module DiffractogramImaging
   function amul!(y,x)
    y = reshape(y,n1*n2,N)
    x = reshape(x,n1*n2,N)
-   y[:,1] .= d.*x[:,1] - β^2*x[:,2]
-   for i=2:N-1
-    y[:,i] .= -β^2*x[:,i-1] + d.*x[:,i] -β^2*x[:,i+1]
+   if N==1
+    y[:,1] .= d.*x[:,1]
+   else
+    y[:,1] .= d.*x[:,1] - β^2*x[:,2]
+    for i=2:N-1
+     y[:,i] .= -β^2*x[:,i-1] + d.*x[:,i] -β^2*x[:,i+1]
+    end
+    y[:,N] .= -β^2*x[:,N-1] + d.*x[:,N]
    end
-   y[:,N] .= -β^2*x[:,N-1] + d.*x[:,N]
   end
-  
   return LinearMap{ComplexF64}(amul!,amul!,N*n1*n2,N*n1*n2,ismutating=true)
  end
 
  """
-  solves a system with matrix M/ρ
+  solves a system with matrix 𝐌 = M/ρ
  """
  function linmap_M_blktrdiag_solve(n1,n2,N,α,β,γ)
   # calculate the weight for periodic Laplacian in spatial variables
@@ -138,7 +141,7 @@ module DiffractogramImaging
   L = vec(abs2.(D1) + abs2.(D2))
 
   # diagonal blocks are all copies of
-  d = α^2*L + 2β^2 + γ^2
+  d = α^2*L .+ (2β^2 + γ^2)
 
   # lower diagonal blocks are not stored, since they are just
   # multiplication by -β^2
@@ -156,6 +159,7 @@ module DiffractogramImaging
   function amul!(x,y)
    y = reshape(y,n1*n2,N)
    x = reshape(x,n1*n2,N)
+
    # forward substitution: solve L u = y for u in place
    x .= y
    x[:,1] ./= cd[:,1]
@@ -171,6 +175,7 @@ module DiffractogramImaging
     x[:,i] ./= cd[:,i]
    end
   end
+
   return LinearMap{ComplexF64}(amul!,amul!,N*n1*n2,N*n1*n2,ismutating=true)
  end 
 
@@ -240,7 +245,7 @@ module DiffractogramImaging
     E += a[i]*y[i]
    end
   
-   # note that we didn't work with M but actually with M/ρ so we need
+   # note that we didn't work with M but actually with 𝐌 = M/ρ so we need
    # to correct factor to obtain E
    E += I + E/ρ 
    return E
