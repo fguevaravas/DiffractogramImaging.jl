@@ -180,6 +180,95 @@ module DiffractogramImaging
 
   return LinearMap{ComplexF64}(amul!,amul!,N*n1*n2,N*n1*n2,ismutating=true)
  end 
+ 
+ # multiplication by M and its inverse in I ⊗ Q basis
+ # (for debugging purposes)
+ function linmap_M_BlockDiag(p1,p2,q1,q2,N,α,β,γ)
+   ## Constructing M as PCC by blocks
+   # diagonal blocks of M as PCC
+   d1 = rk_periodic_derivative(1,(n1,n2))
+   d2 = rk_periodic_derivative(2,(n1,n2))
+
+   # put kernel for D1 as a PCC
+   D1 = rk_to_pcc2d(d1,p1,p2,q1,q2)
+   D2 = rk_to_pcc2d(d2,p1,p2,q1,q2)
+
+   # block matrix rep
+   D̂1 = pcc2d_to_BlockDiagonal(D1)
+   D̂2 = pcc2d_to_BlockDiagonal(D2)
+
+   # Laplacian in space
+   L̂ = D̂1'*D̂1 + D̂2'*D̂2 
+
+   # diagonal blocks are all copies of
+   MD = α^2*L̂ + (2β^2 + γ^2)*I
+
+   # offdiagonal blocks are all copies of
+   ML = -β^2*I(n1*n2)
+
+   function M_mul!(y,x)
+    y=reshape(y,n1*n2,N)
+    x=reshape(x,n1*n2,N)
+    for i=1:N
+     y[:,i] .= MD*x[:,i]
+    end
+    for i=1:N-1
+     y[:,i] .+= ML*x[:,i+1]
+    end
+    for i=2:N
+     y[:,i] .+= ML*x[:,i-1]
+    end
+    return y
+   end
+
+   # Cholesky factorization of M as a PCC
+   CD = Vector{Any}(undef,N)     # diagonal blocks
+   CL = VectorBlockDiag{T}(undef,N-1)   # lower diagonal blocks
+   CD[1]=cholesky(MD)
+   for i=1:N-1
+    # note: the following does not work. it seems to be a bug between
+    # BlockDiagonals and Diagonal interactions
+    #CL[i] = ML/CD[i].U 
+    CL[i] = -β^2*inv(CD[i].U) 
+    CD[i+1] = cholesky(MD - CL[i]*CL[i]')
+   end 
+
+   function L_mul!(y,x)
+    y=reshape(y,n1*n2,N)
+    x=reshape(x,n1*n2,N)
+    y[:,1] = CD[1].L*x[:,1]
+    for i=2:N
+     y[:,i] = CL[i]*y[:,i-1] + CD[i].L*y[:,i]
+    end
+   end
+
+   function U_mul!(y,x)
+    y=reshape(y,n1*n2,N)
+    x=reshape(x,n1*n2,N)
+    y[:,N] = CD[N].U*x[:,N]
+    for i=N-1:-1:1
+     y[:,i] = CL[i]'*y[:,i+1] + CD[i].U*y[:,i]
+    end
+   end
+
+   function M_inv_mul!(y,x)
+    y=reshape(y,n1*n2,N)
+    x=reshape(x,n1*n2,N)
+    u=zero(y)
+    # u = L^-1 x (forward substitution)
+    u[:,1] = CD[1].L\x[:,1]
+    for i=2:N
+     u[:,i] = CD[i].L\(x[:,i] - CL[i-1]*u[i-1])
+    end
+
+    # y = L^-* u (backward substituion)
+    y[:,N] = CD[N].U\u[:,N]
+    for i=N-1:-1:1
+     y[:,i] = CD[i].U\(u[:,i] - CL[i]'*y[:,i+1])
+    end
+   end
+   
+ end
 
  """
   Convert a regular convolution kernel to a periodic kernel
@@ -221,7 +310,6 @@ module DiffractogramImaging
    # block matrix rep
    D̂1 = pcc2d_to_BlockDiagonal(D1)
    D̂2 = pcc2d_to_BlockDiagonal(D2)
-    
 
    # Laplacian in space
    L̂ = D̂1'*D̂1 + D̂2'*D̂2 
@@ -237,7 +325,10 @@ module DiffractogramImaging
    CL = VectorBlockDiag{T}(undef,N-1)   # lower diagonal blocks
    CD[1]=cholesky(MD)
    for i=1:N-1
-    CL[i] = ML/CD[i].U
+    # note: the following does not work. it seems to be a bug between
+    # BlockDiagonals and Diagonal interactions
+    #CL[i] = ML/CD[i].U 
+    CL[i] = -β^2*inv(CD[i].U) 
     CD[i+1] = cholesky(MD - CL[i]*CL[i]')
    end 
 
@@ -254,7 +345,7 @@ module DiffractogramImaging
    y = VectorBlockDiag{T}(undef,N)
    y[N] = CD[N].U\u[N]
    for i=N-1:-1:1
-    y[i] = CD[i].U\(u[i] - CL[i]'*u[i+1])
+    y[i] = CD[i].U\(u[i] - CL[i]'*y[i+1])
    end
 
    # multiply on the left by A
@@ -265,7 +356,7 @@ module DiffractogramImaging
   
    # note that we didn't work with M but actually with 𝐌 = M/ρ so we need
    # to correct factor to obtain E
-   E += I + E/ρ 
+   E = I + E/ρ 
    return E
   end 
 

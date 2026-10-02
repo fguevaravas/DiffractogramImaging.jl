@@ -102,6 +102,9 @@ function test_rk_to_pcc2d(p,q)
 end
 
 # we build E explicity, so do this only for small sizes
+#
+# NOTE TO SELF: the problem is probaby normalization issues
+# since both F and Q are NOT unitary
 function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  n1 = p1*q1; n2=p2*q2
  # generate fake a
@@ -109,15 +112,17 @@ function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  E = DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
 
  # dense M
- D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
- D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
- L = diagm(vec(abs2.(D1) + abs2.(D2)))
+ D1 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(1,(n1,n2))),p1,p2,q1,q2)
+ D2 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(2,(n1,n2))),p1,p2,q1,q2)
+ D̂1 = DI.pcc2d_to_BlockDiagonal(D1)
+ D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
+ L = D̂1'*D̂1 + D̂2'*D̂2
  LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
- M = ρ*(α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)
+ M = ρ*(α^2*I(N)⊗L + β^2*LN⊗I(n1*n2) + γ^2*I)
 
  A = hcat(a...) # calculates a dense A
  x = randn(n1*n2) + im*randn(n1*n2)
- y  = M*x
+ y  = E*x
  y_ = x + A*(M\(A'*x))
 
  @test relerr(y,y_) ≈ 0 atol=1e-10
@@ -134,7 +139,6 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
-if false ##################################
 @testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
@@ -183,11 +187,9 @@ end
  end
 end
 
-end #########################
-
 @testset "testing E" begin
-  test_E(3,4,4,5,1)
-  #test_E(3,4,4,5,2)
-  #test_E(3,4,4,5,4)
+  test_E(3,4,2,3,1)
+  test_E(3,4,2,3,2)
+  test_E(3,4,2,3,4)
 end
 
