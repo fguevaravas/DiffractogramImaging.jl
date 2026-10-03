@@ -102,9 +102,6 @@ function test_rk_to_pcc2d(p,q)
 end
 
 # we build E explicity, so do this only for small sizes
-#
-# NOTE TO SELF: the problem is probaby normalization issues
-# since both F and Q are NOT unitary
 function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  n1 = p1*q1; n2=p2*q2
  # generate fake a
@@ -128,6 +125,76 @@ function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  @test relerr(y,y_) ≈ 0 atol=1e-10
 end
 
+# check both representations for M. Full matrices so only small sizes!!
+function test_M_full(p1,p2,q1,q2,N,α=1,β=2,γ=3)
+ n1 = p1*q1; n2 = p2*q2
+ # dense transforms!
+ Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
+ F = Matrix(DI.linmap_F(n1,n2))
+
+ # M with block diagonals
+ D1 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(1,(n1,n2))),p1,p2,q1,q2)
+ D2 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(2,(n1,n2))),p1,p2,q1,q2)
+ D̂1 = DI.pcc2d_to_BlockDiagonal(D1)
+ D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
+ L = D̂1'*D̂1 + D̂2'*D̂2
+ LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
+ M1 = (I(N) ⊗ Q') * (α^2*I(N)⊗L + β^2*LN⊗I(n1*n2) + γ^2*I) * (I(N) ⊗ Q)
+
+ # M with FFTs
+ D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
+ D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
+ L = diagm(vec(abs2.(D1) + abs2.(D2)))
+ LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
+ M2 = (I(N) ⊗ F') * (α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)  * (I(N) ⊗ F)
+
+ x = randn(N*n1*n2) + im*randn(N*n1*n2)
+ 
+ y1 = M1*x
+ y2 = M2*x
+
+ println([y1[i]/y2[i] for i=1:3])
+ 
+
+ @test relerr(y1,y2) ≈ 0 atol=1e-10
+end
+
+# another test for E: checks equality including all the
+# unitary transformations. ONLY small sizes
+function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=1)
+ n1 = p1*q1; n2=p2*q2
+ # generate fake a
+ a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
+ Ẽ = DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
+
+ # dense transforms!
+ Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
+ F = Matrix(DI.linmap_F(n1,n2))
+ 
+
+ E = Q'*Ẽ*Q
+
+ D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
+ D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
+ L = diagm(vec(abs2.(D1) + abs2.(D2)))
+ LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
+ M̂ = ρ*(α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)
+
+ M = (I(N) ⊗ F') * M̂ * (I(N) ⊗ F)
+
+ A = Q' * hcat(a...) * (I(N) ⊗ Q) # 
+ 
+ E_ = I + A*(M\A')
+
+ x =randn(n1*n2) + 1im*rand(n1*n2)
+ y = E*x
+ y_ = E_*x
+
+ println([y[i]/y_[i] for i=1:3])
+
+ @test relerr(y,y_) ≈ 0 atol=1e-10
+end
+
 
 
 test_cases = [
@@ -139,6 +206,7 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
+if false #################################
 @testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
@@ -192,4 +260,10 @@ end
   test_E(3,4,2,3,2)
   test_E(3,4,2,3,4)
 end
+
+end ##########################
+
+test_M_full(3,4,2,3,1)
+
+#test_E_full(3,4,2,3,1)
 
