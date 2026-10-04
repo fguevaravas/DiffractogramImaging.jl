@@ -4,7 +4,7 @@ module DiffractogramImaging
  fftwComplex = FFTW.fftwComplex
  
  """
-  Encapsulate the unitary (up to a constant) transformation that makes
+  Encapsulate the unitary transformation that makes
   a PCC block diagonal as a LinearMap
   Inputs:
    T complex type (e.g. ComplexF64)
@@ -17,18 +17,18 @@ module DiffractogramImaging
   function Qmul!(y,x)
    x = reshape(x,p1,q1,p2,q2)
    y = reshape(y,p1,p2,q1,q2)
-   x̂ = fft(x,(2,4))
+   x̂ = fft(x,(2,4))/sqrt(q1*q2)
    permutedims!(y,x̂,(1,3,2,4))
    return vec(y)
   end
 
-  # technically this not the adjoint but the inverse
   function Qmulh!(x,y)
    @assert( length(y) == n1*n2 && length(x) == n1*n2 )
    y = reshape(y,p1,p2,q1,q2)
    x = reshape(x,p1,q1,p2,q2)
    permutedims!(x,y,(1,3,2,4))
-   ifft!(x,(2,4))
+   bfft!(x,(2,4))
+   x./=sqrt(q1*q2)
    return vec(x)
   end
   return LinearMap{T}(Qmul!,Qmulh!,n1*n2,n1*n2,ismutating=true)
@@ -36,7 +36,7 @@ module DiffractogramImaging
  linmap_Q(p1,p2,q1,q2) = linmap_Q(ComplexF64,p1,p2,q1,q2) 
 
  """
-  Encapsulate the unitary (up to a constant) discrete Fourier transform
+  Encapsulate the unitary  discrete Fourier transform
   Inputs:
    T complex type (e.g. ComplexF64)
    p1,p2,q1,q2 dimensions
@@ -46,16 +46,17 @@ module DiffractogramImaging
   function Fmul!(y,x)
    y = reshape(y,n1,n2)
    x = reshape(x,n1,n2)
-   y .= x
+   y .= x/sqrt(n1*n2)
    fft!(y)
+   return vec(y)
   end
 
-  # technically this is not the adjoint but the inverse
   function Fmulh!(y,x)
    y = reshape(y,n1,n2)
    x = reshape(x,n1,n2)
-   y .= x
-   ifft!(y)
+   y .= x/sqrt(n1*n2)
+   bfft!(y)
+   return vec(y)
   end
   return LinearMap{T}(Fmul!,Fmulh!,n1*n2,n1*n2,ismutating=true)
  end

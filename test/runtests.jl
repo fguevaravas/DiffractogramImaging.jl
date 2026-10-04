@@ -9,6 +9,9 @@ function test_Q(p,q)
  y = Q*x
  x_ = Q'*y
  @test relerr(x,x_) ≈ 0 atol=1e-10
+ y = Q'*x
+ x_ = Q*y
+ @test relerr(x,x_) ≈ 0 atol=1e-10
 end
 
 function test_F(n)
@@ -27,7 +30,7 @@ function test_conv(n)
  k = randn(n...)+1im*randn(n...)
  x = randn(n...)+1im*randn(n...)
  F = DI.linmap_F(n...)
- xk1 = F'*((F*vec(x)).*(F*vec(k)))
+ xk1 = F'*((F*vec(x)).*vec(fft(k))) # even if F is unitary the diag matrix is the same
 
  # naive circular convolution
  xk2 = zeros(ComplexF64,n...)
@@ -92,7 +95,7 @@ function test_rk_to_pcc2d(p,q)
  k̂ = DI.pcc2d_to_BlockDiagonal(k̃)
  F = DI.linmap_F(n...)
  Q = DI.linmap_Q(p...,q...)
- Fk̂ = Diagonal(F*vec(k))
+ Fk̂ = Diagonal(vec(fft(k))) 
  K1 = F'*Fk̂*F
  K2 = Q'*k̂*Q
  x = randn(prod(n)) + 1im*randn(prod(n))
@@ -153,9 +156,6 @@ function test_M_full(p1,p2,q1,q2,N,α=1,β=2,γ=3)
  y1 = M1*x
  y2 = M2*x
 
- println([y1[i]/y2[i] for i=1:3])
- 
-
  @test relerr(y1,y2) ≈ 0 atol=1e-10
 end
 
@@ -182,15 +182,13 @@ function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=1)
 
  M = (I(N) ⊗ F') * M̂ * (I(N) ⊗ F)
 
- A = Q' * hcat(a...) * (I(N) ⊗ Q) # 
+ A = Q' * hcat(a...) * (I(N) ⊗ Q)  
  
  E_ = I + A*(M\A')
 
  x =randn(n1*n2) + 1im*rand(n1*n2)
  y = E*x
  y_ = E_*x
-
- println([y[i]/y_[i] for i=1:3])
 
  @test relerr(y,y_) ≈ 0 atol=1e-10
 end
@@ -206,7 +204,7 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
-if false #################################
+#if false #################################
 @testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
@@ -261,9 +259,9 @@ end
   test_E(3,4,2,3,4)
 end
 
-end ##########################
-
-test_M_full(3,4,2,3,1)
-
-#test_E_full(3,4,2,3,1)
-
+@testset "test E full" begin
+  test_E_full(3,4,2,3,1)
+  test_E_full(3,4,2,3,2)
+  test_E_full(3,4,2,3,4)
+end
+#end ##########################
