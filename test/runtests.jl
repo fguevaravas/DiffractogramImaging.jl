@@ -1,27 +1,32 @@
-using DiffractogramImaging, PCC, Test, LinearAlgebra, FFTW, BlockDiagonals
+using DiffractogramImaging, PCC, Test, LinearAlgebra, FFTW
+using BlockDiagonals, LinearMaps
 ⊗ = LinearAlgebra.kron
 DI = DiffractogramImaging
 relerr(a,b) = norm(a-b)/norm(a)
 
+# Calculates Neumann 1D Laplacian of size N.  The case N=1 is not well defined
+# but this function returns [1]
+function neumann_laplacian(N)
+ LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
+ LN[1,1]=1; LN[N,N]=1; # use Neumann conditions
+ return LN
+end
+
 function test_Q(p,q)
  Q = DI.linmap_Q(p...,q...)
  x = randn(prod(p)*prod(q)) + 1im*randn(prod(p)*prod(q))
- y = Q*x
- x_ = Q'*y
+ x_ = Q'*Q*x
  @test relerr(x,x_) ≈ 0 atol=1e-10
- y = Q'*x
- x_ = Q*y
+ x_ = Q*Q'*x
  @test relerr(x,x_) ≈ 0 atol=1e-10
 end
 
 function test_F(n)
  F = DI.linmap_F(n...)
  x = randn(prod(n)) + 1im*randn(prod(n))
- y = F*x
- x_ = F'*y
+ x_ = F'*F*x
  @test relerr(x,x_) ≈ 0 atol=1e-10
- y = F'*x
- x_ = F*y
+ x_ = F*F'*x
  @test relerr(x,x_) ≈ 0 atol=1e-10
 end
 
@@ -64,12 +69,9 @@ function test_M_solve(n1,n2,N,α,β,γ)
  Minv = DI.linmap_M_blktrdiag_solve(n1,n2,N,α,β,γ)
 
  x = randn(N*n1*n2) + 1im*randn(N*n1*n2)
-
- y = M*x
- x_ = Minv*y
+ x_ = Minv*M*x
  @test relerr(x,x_) ≈ 0 atol=1e-10
- y = Minv*x
- x_ = M*y
+ x_ = M*Minv*x
  @test relerr(x,x_) ≈ 0 atol=1e-10
 end
 
@@ -78,8 +80,8 @@ function test_M(n1,n2,N,α,β,γ)
  D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
  D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
  L = diagm(vec(abs2.(D1) + abs2.(D2)))
- LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
- M = α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I
+ LN = neumann_laplacian(N)
+ M = α^2 * I(N) ⊗ L + (N>1)*β^2 * LN ⊗ I(n1*n2) + γ^2*I
  M_ =  DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ)
  x = randn(N*n1*n2) + 1im*randn(N*n1*n2)
  y = M*x
@@ -117,10 +119,10 @@ function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  D̂1 = DI.pcc2d_to_BlockDiagonal(D1)
  D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
  L = D̂1'*D̂1 + D̂2'*D̂2
- LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
+ LN = neumann_laplacian(N) 
  M = ρ*(α^2*I(N)⊗L + β^2*LN⊗I(n1*n2) + γ^2*I)
 
- A = hcat(a...) # calculates a dense A
+ A = hcat(a...) 
  x = randn(n1*n2) + im*randn(n1*n2)
  y  = E*x
  y_ = x + A*(M\(A'*x))
@@ -141,15 +143,17 @@ function test_M_full(p1,p2,q1,q2,N,α=1,β=2,γ=3)
  D̂1 = DI.pcc2d_to_BlockDiagonal(D1)
  D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
  L = D̂1'*D̂1 + D̂2'*D̂2
- LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
- M1 = (I(N) ⊗ Q') * (α^2*I(N)⊗L + β^2*LN⊗I(n1*n2) + γ^2*I) * (I(N) ⊗ Q)
+ LN = neumann_laplacian(N)
+ M̂1 = α^2*I(N)⊗L + β^2*LN⊗I(n1*n2) + γ^2*I
+ M1 = (I(N) ⊗ Q') * M̂1 * (I(N) ⊗ Q)
 
  # M with FFTs
  D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
  D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
  L = diagm(vec(abs2.(D1) + abs2.(D2)))
- LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
- M2 = (I(N) ⊗ F') * (α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)  * (I(N) ⊗ F)
+ LN = neumann_laplacian(N) 
+ M̂2 = α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I
+ M2 = (I(N) ⊗ F') * M̂2  * (I(N) ⊗ F)
 
  x = randn(N*n1*n2) + im*randn(N*n1*n2)
  
@@ -157,11 +161,17 @@ function test_M_full(p1,p2,q1,q2,N,α=1,β=2,γ=3)
  y2 = M2*x
 
  @test relerr(y1,y2) ≈ 0 atol=1e-10
+
+ # check positive definiteness
+ M1inv = cholesky(Hermitian(M1),check=false)
+ M2inv = cholesky(Hermitian(M2),check=false)
+ @test issuccess(M1inv)
+ @test issuccess(M2inv)
 end
 
 # another test for E: checks equality including all the
 # unitary transformations. ONLY small sizes
-function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=1)
+function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  n1 = p1*q1; n2=p2*q2
  # generate fake a
  a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
@@ -177,23 +187,122 @@ function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=1)
  D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
  D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
  L = diagm(vec(abs2.(D1) + abs2.(D2)))
- LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
+ LN = neumann_laplacian(N)
  M̂ = ρ*(α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)
 
  M = (I(N) ⊗ F') * M̂ * (I(N) ⊗ F)
 
  A = Q' * hcat(a...) * (I(N) ⊗ Q)  
  
- E_ = I + A*(M\A')
+ E_ = I + A*(M\(A'))
 
  x =randn(n1*n2) + 1im*rand(n1*n2)
  y = E*x
  y_ = E_*x
-
  @test relerr(y,y_) ≈ 0 atol=1e-10
+
+ # test positive definiteness
+ Einv_ = cholesky(Hermitian(E_),check=false)
+ Einv  = cholesky(Hermitian(E) ,check=false)
+ @test issuccess(Einv_)
+ @test issuccess(Einv)
+
 end
 
+# this is only for small sizes
+function test_R(n1,n2,N,α=1,β=2,γ=3)
+ R1 = DI.linmap_R(n1,n2,N,α,β,γ)
+ # periodic difference matrix
+ function Dp(n)
+  res = zeros(n,n)
+  for i=1:n-1
+   res[i,[i,i+1]] = [-1 1]
+  end
+  res[n,[n,1]] = [-1,1]
+  return res
+ end
 
+ # difference matrix
+ function D(n)
+  res =  zeros(n-1,n)
+  for i=1:n-1
+   res[i,[i,i+1]] = [-1 1]
+  end
+  return res
+ end
+ 
+ D1 = I(N) ⊗ I(n2) ⊗ Dp(n1)
+ D2 = I(N) ⊗ Dp(n2) ⊗ I(n1)
+ DN = D(N) ⊗ I(n1*n2)
+
+ R2 = [α*D1 
+       α*D2
+       β*DN
+       γ*I ]
+
+ # check R
+ x = randn(n1*n2*N) + 1im*randn(n1*n2*N)
+ y1 = R1*x
+ y2 = R2*x
+ @test relerr(y1,y2) ≈ 0 atol=1e-10
+
+ # check R'
+ x = randn(n1*n2*(4N-1)) + 1im*randn(n1*n2*(4N-1))
+ y1 = R1'*x
+ y2 = R2'*x
+ @test relerr(y1,y2) ≈ 0 atol=1e-10
+
+ # check R'*R = M
+ # M with FFTs
+ F = Matrix(DI.linmap_F(n1,n2)) # dense!!
+ D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
+ D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
+ L = diagm(vec(abs2.(D1) + abs2.(D2)))
+ LN = neumann_laplacian(N)
+ M̂ = α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I
+ M = (I(N) ⊗ F') * M̂  * (I(N) ⊗ F)
+
+ println(norm(R2'*R2 - M))
+
+ @test norm(R2'*R2 - M)≈0 atol=1e-10
+ 
+
+end
+
+# this is only for small sizes!!
+function test_augmented_ls_solver(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
+
+ n1 = p1*q1; n2=p2*q2
+ # generate fake a
+ a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
+ # dense transforms!
+ Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
+ F = Matrix(DI.linmap_F(n1,n2))
+ A = Q' * hcat(a...) * (I(N) ⊗ Q)  
+
+ D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
+ D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
+ L = diagm(vec(abs2.(D1) + abs2.(D2)))
+ LN = neumann_laplacian(N)
+ M̂ = ρ*(α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)
+
+ M = (I(N) ⊗ F') * M̂ * (I(N) ⊗ F)
+
+ B = [ A
+       M ]
+
+ b = randn((N+1)*n1*n2) + im*randn((N+1)*n1*n2)
+
+ x = (B'*B)\(B'*b)
+
+ BhBiBh = DI.linmap_augmented_ls_solver(p1,p2,q1,q2,a,α,β,γ,ρ)
+ println("size = ",size(BhBiBh))
+ x_ = BhBiBh*b
+
+ @test relerr(x,x_) ≈ 0 atol=1e-10
+end
+
+########################################################################
 
 test_cases = [
   (n=(10,11),p=(1,1)),
@@ -233,6 +342,14 @@ end
  test_M(24,12,4,3,2,1)
 end
 
+
+@testset "testing M full" begin
+  test_M_full(3,4,2,3,1)#,2,2,100)
+  #test_M_full(3,4,2,3,2)
+  #test_M_full(3,4,2,3,3)
+end
+
+
 @testset "testing M solve" begin
  test_M_solve(12,24,1,3,2,1)
  test_M_solve(12,24,2,3,2,1)
@@ -264,4 +381,16 @@ end
   test_E_full(3,4,2,3,2)
   test_E_full(3,4,2,3,4)
 end
-#end ##########################
+
+
+@testset "testing R" begin
+ test_R(10,11,2)
+ test_R(11,10,4)
+end
+#end ##################
+
+@testset "augment LS solver" begin
+  #test_augmented_ls_solver(3,4,2,3,2)
+  #test_augmented_ls_solver(3,4,2,3,4)
+end
+

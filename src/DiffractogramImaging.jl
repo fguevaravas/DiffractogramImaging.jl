@@ -71,7 +71,7 @@ module DiffractogramImaging
    n1 == p1*q1 and n2 == p2*q2
 
   Outputs:
-   k̂ BlockDiagonal reprentation of operator
+   k̂ BlockDiagonal representation of operator
  """
  function pcc2d_to_BlockDiagonal(k)
   n1,n2,p1,p2 = size(k)
@@ -80,6 +80,48 @@ module DiffractogramImaging
   k̂ = fft(reshape(k,p1,q1,p2,q2,p1,p2),(2,4))
   k̂ = reshape(permutedims(k̂,(1,3,5,6,2,4)),p1*p2,p1*p2,q1*q2)
   return BlockDiagonal([ k̂[:,:,i] for i=1:q1*q2 ])
+ end
+ 
+ """
+  a linear map representing the matrix
+
+   R = [ α I(N) ⊗ D1
+         α I(N) ⊗ D2
+         β DN ⊗ I(n1*n2)
+         γ I(n1*n2*N) ]
+  Inputs:
+   n1,n2,N dimensions
+   α,β,γ regularization parameters
+
+   The map is (4N-1)*n1*n2 x N*n1*n2
+ """
+ function linmap_R(n1,n2,N,α,β,γ)
+  
+  d1 = circshift(1:n1,-1)
+  d2 = circshift(1:n2,-1)
+  d1t = circshift(1:n1,1)
+  d2t = circshift(1:n2,1)
+  function mul!(y,x)
+   x = reshape(x,n1,n2,N)
+   y = reshape(y,n1,n2,4N-1)
+   y[:,:,1:N] .= α*(x[d1,:,:] - x)
+   y[:,:,N.+(1:N)] .= α*(x[:,d2,:] - x)
+   y[:,:,2N.+(1:N-1)] .= β*(x[:,:,2:N] - x[:,:,1:N-1])
+   y[:,:,(3N-1).+(1:N)] .= γ*x
+   return vec(y)
+  end
+  function mulh!(x,y)
+   x = reshape(x,n1,n2,N)
+   y = reshape(y,n1,n2,4N-1)
+   x .= 0
+   x .+= α*(y[d1t,:,1:N] - y[:,:,1:N])
+   x .+= α*(y[:,d2t,N.+(1:N)] - y[:,:,N.+(1:N)])
+   x[:,:,2:N]   .+= β*y[:,:,2N.+(1:N-1)]
+   x[:,:,1:N-1] .-= β*y[:,:,2N.+(1:N-1)]
+   x .+= γ*y[:,:,(3N-1).+(1:N)]
+   return vec(x)
+  end
+  return LinearMap{ComplexF64}(mul!,mulh!,(4N-1)*n1*n2,N*n1*n2,ismutating=true)
  end
 
  """
@@ -112,9 +154,13 @@ module DiffractogramImaging
   D2 = fft(rk_periodic_derivative(2,(n1,n2)))
   L = vec(abs2.(D1) + abs2.(D2))
 
+  β = (N>1)*β # to handle case N==1
   # diagonal blocks are all copies of
   d = α^2*L .+ (2β^2 + γ^2)
-
+  # except for the first and last block in wavelength 
+  # (due to L_N being Neumann BC Laplacian)
+  dn = α^2*L .+ (β^2 + γ^2)
+  
   # lower diagonal blocks are not stored, since they are just
   # multiplication by -β^2
 
@@ -122,14 +168,15 @@ module DiffractogramImaging
    y = reshape(y,n1*n2,N)
    x = reshape(x,n1*n2,N)
    if N==1
-    y[:,1] .= d.*x[:,1]
-   else
-    y[:,1] .= d.*x[:,1] - β^2*x[:,2]
-    for i=2:N-1
-     y[:,i] .= -β^2*x[:,i-1] + d.*x[:,i] -β^2*x[:,i+1]
-    end
-    y[:,N] .= -β^2*x[:,N-1] + d.*x[:,N]
+    y[:,1] .= dn.*x[:,1]
+    return vec(y)
    end
+   y[:,1] .= dn.*x[:,1] - β^2*x[:,2]
+   for i=2:N-1
+    y[:,i] .= -β^2*x[:,i-1] + d.*x[:,i] -β^2*x[:,i+1]
+   end
+   y[:,N] .= -β^2*x[:,N-1] + dn.*x[:,N]
+   return vec(y)
   end
   return LinearMap{ComplexF64}(amul!,amul!,N*n1*n2,N*n1*n2,ismutating=true)
  end
@@ -143,8 +190,13 @@ module DiffractogramImaging
   D2 = fft(rk_periodic_derivative(2,(n1,n2)))
   L = vec(abs2.(D1) + abs2.(D2))
 
+  β = (N>1)*β # to handle case N==1
+
   # diagonal blocks are all copies of
   d = α^2*L .+ (2β^2 + γ^2)
+  # except for the first and last block in wavelength 
+  # (due to L_N being Neumann BC Laplacian)
+  dn = α^2*L .+ (β^2 + γ^2)
 
   # lower diagonal blocks are not stored, since they are just
   # multiplication by -β^2
@@ -152,10 +204,14 @@ module DiffractogramImaging
   # compute Cholesky factor M = LL^*
   cd = zeros(n1*n2,N); # diagonal blocks
   cl = zeros(n1*n2,N-1); # lower diagonal  blocks
-  cd[:,1] = sqrt.(d)
+  cd[:,1] = sqrt.(dn)
   for i=1:N-1
    cl[:,i] = -β^2 ./cd[:,i]
-   cd[:,i+1] = sqrt.(d - cl[:,i].^2)
+   if i<N-1
+    cd[:,i+1] = sqrt.(d - cl[:,i].^2)
+   else
+    cd[:,i+1] = sqrt.(dn - cl[:,i].^2)
+   end
   end 
 
   # to compute action of M^{-1} = L^{-*} L^{-1} 
@@ -171,7 +227,7 @@ module DiffractogramImaging
     x[:,i] ./= cd[:,i]
    end
 
-   # backward substituion: solve L^* x = u in place
+   # backward substitution: solve L^* x = u in place
    x[:,N] ./= cd[:,N]
    for i=N-1:-1:1
     x[:,i] .-= cl[:,i].*x[:,i+1]
@@ -200,79 +256,122 @@ module DiffractogramImaging
 
  const VectorBlockDiag{T} = Vector{BlockDiagonal{T, Matrix{T}}}
 
-  """
-   Construct the block matrix representation of the matrix E = I + A M^{-1} A^*
-   (this only needs to be done once)
-  """
-  function BlockDiagonal_E(a::Vector{<:BlockDiagonal{T, <:AbstractMatrix{T}}},
-                           α,β,γ,ρ,p1,p2,q1,q2) where T<:Complex
-   n1 = p1*q1; n2 = p2*q2
-   N = length(a) 
-   @assert all(size(a[1]) .== (n1*n2,n1*n2))
-   @assert nblocks(a[1]) == q1*q2
+ """
+  Construct the block matrix representation of the matrix E = I + A M^{-1} A^*
+  (this can be expensive, but only needs to be done once)
+ """
+ function BlockDiagonal_E(a::Vector{<:BlockDiagonal{T, <:AbstractMatrix{T}}},
+                          α,β,γ,ρ,p1,p2,q1,q2) where T<:Complex
+  n1 = p1*q1; n2 = p2*q2
+  N = length(a) 
+  @assert all(size(a[1]) .== (n1*n2,n1*n2))
+  @assert nblocks(a[1]) == q1*q2
 
-   ## Constructing M as PCC by blocks
-   # diagonal blocks of M as PCC
-   d1 = rk_periodic_derivative(1,(n1,n2))
-   d2 = rk_periodic_derivative(2,(n1,n2))
+  ## Constructing M as PCC by blocks
+  # diagonal blocks of M as PCC
+  d1 = rk_periodic_derivative(1,(n1,n2))
+  d2 = rk_periodic_derivative(2,(n1,n2))
 
-   # put kernel for D1 as a PCC
-   D1 = rk_to_pcc2d(d1,p1,p2,q1,q2)
-   D2 = rk_to_pcc2d(d2,p1,p2,q1,q2)
+  # put kernel for D1 as a PCC
+  D1 = rk_to_pcc2d(d1,p1,p2,q1,q2)
+  D2 = rk_to_pcc2d(d2,p1,p2,q1,q2)
 
-   # block matrix rep
-   D̂1 = pcc2d_to_BlockDiagonal(D1)
-   D̂2 = pcc2d_to_BlockDiagonal(D2)
+  # block matrix rep
+  D̂1 = pcc2d_to_BlockDiagonal(D1)
+  D̂2 = pcc2d_to_BlockDiagonal(D2)
 
-   # Laplacian in space
-   L̂ = D̂1'*D̂1 + D̂2'*D̂2 
+  # Laplacian in space
+  L̂ = D̂1'*D̂1 + D̂2'*D̂2 
 
-   # diagonal blocks are all copies of
-   MD = α^2*L̂ + (2β^2 + γ^2)*I
+  # diagonal blocks are all copies of
+  MD = α^2*L̂ + (2β^2 + γ^2)*I
+  # except for first and last (due to Neumann BC Laplacian)
+  MDn = α^2*L̂ + (β^2 + γ^2)*I
 
-   # offdiagonal blocks are all copies of
-   ML = -β^2*I(n1*n2)
+  # offdiagonal blocks are all copies of
+  ML = -β^2*I(n1*n2)
 
-   # Cholesky factorization of M as a PCC
-   CD = Vector{Any}(undef,N)     # diagonal blocks
-   CL = VectorBlockDiag{T}(undef,N-1)   # lower diagonal blocks
-   CD[1]=cholesky(MD)
-   for i=1:N-1
-    # note: the following does not work. it seems to be a bug between
-    # BlockDiagonals and Diagonal interactions
-    #CL[i] = ML/CD[i].U 
-    CL[i] = -β^2*inv(CD[i].U) 
+  # Cholesky factorization of M as a PCC
+  CD = Vector{Any}(undef,N)     # diagonal blocks
+  CL = VectorBlockDiag{T}(undef,N-1)   # lower diagonal blocks
+  CD[1]=cholesky(MDn)
+  for i=1:N-1
+   # note: the following does not work. it seems to be a bug between
+   # BlockDiagonals and Diagonal interactions
+   #CL[i] = ML/CD[i].U 
+   CL[i] = -β^2*inv(CD[i].U) 
+   if i<N-1
     CD[i+1] = cholesky(MD - CL[i]*CL[i]')
-   end 
-
-   # since M = L L^*, we need calculate Y = M^{-1} A^* = L^-* L^-1 A^*
-    
-   # multiply L^-1 A^* (forward substitution)
-   u = VectorBlockDiag{T}(undef,N)
-   u[1] = CD[1].L\(a[1]')
-   for i=2:N
-    u[i] = CD[i].L\(a[i]' - CL[i-1]*u[i-1])
+   else
+    CD[i+1] = cholesky(MDn - CL[i]*CL[i]')
    end
-
-   # multiply by L^* (backward substituion)
-   y = VectorBlockDiag{T}(undef,N)
-   y[N] = CD[N].U\u[N]
-   for i=N-1:-1:1
-    y[i] = CD[i].U\(u[i] - CL[i]'*y[i+1])
-   end
-
-   # multiply on the left by A
-   E = zero(a[1])
-   for i=1:N
-    E += a[i]*y[i]
-   end
-  
-   # note that we didn't work with M but actually with 𝐌 = M/ρ so we need
-   # to correct factor to obtain E
-   E = I + E/ρ 
-   return E
   end 
 
+  # since M = L L^*, we need calculate Y = M^{-1} A^* = L^-* L^-1 A^*
+   
+  # multiply L^-1 A^* (forward substitution)
+  u = VectorBlockDiag{T}(undef,N)
+  u[1] = CD[1].L\(a[1]')
+  for i=2:N
+   u[i] = CD[i].L\(a[i]' - CL[i-1]*u[i-1])
+  end
+
+  # multiply by L^* (backward substituion)
+  y = VectorBlockDiag{T}(undef,N)
+  y[N] = CD[N].U\u[N]
+  for i=N-1:-1:1
+   y[i] = CD[i].U\(u[i] - CL[i]'*y[i+1])
+  end
+
+  # multiply on the left by A
+  E = zero(a[1])
+  for i=1:N
+   E += a[i]*y[i]
+  end
+ 
+  # note that we didn't work with M but actually with 𝐌 = M/ρ so we need
+  # to correct factor to obtain E
+  E = I + E/ρ 
+  return Hermitian(E)
+ end 
+ """
+  Inputs:
+    a block matrix representation of matrix A
+    α,β,γ,ρ regularization parameters
+    p1,p2,q1,q2 problem size 
+
+  Outputs:
+    A linear map equivalent to solving the problem
+
+         min || B x - b ||_2^2
+ """
+ function linmap_augmented_ls_solver(p1,p2,q1,q2,a,α,β,γ,ρ)
+  @assert ρ>0
+  n1 = p1*q1; n2 = p2*q2
+  N = length(a)
+  Q = linmap_Q(p1,p2,q1,q2)
+  F = linmap_F(n1,n2)
+  R = linmap_R(n1,n2,N,α,β,γ)
+  Minv = (I(N) ⊗ F')*linmap_M_blktrdiag_solve(n1,n2,N,α,β,γ)*(I(N) ⊗ F)
+  E = BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
+
+  # compute Cholesky factor of E
+  Einv = cholesky(E)
+
+  A =  hcat([Q'*a[i]*Q for i=1:N]...)
+  B = [ A
+        sqrt(ρ)*R ]
+  
+  # this is where the Sherman-Morrison-Woodbury formula is used
+  function mul!(y,x)
+   u = Minv*B'*x
+   y .= u - Minv*A'*(Einv\(A*u))
+  end
+
+  mulh!(y,x) = @error("not implemented")
+
+  return LinearMap{ComplexF64}(mul!,mulh!,N*n1*n2,4N*n1*n2,ismutating=true)
+ end
 
 
 #function admm_solver()
