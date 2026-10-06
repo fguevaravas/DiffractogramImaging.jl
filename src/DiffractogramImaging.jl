@@ -426,21 +426,55 @@ module DiffractogramImaging
   return LinearMap{ComplexF64}(mul!,mulh!,N*n1*n2,4N*n1*n2,ismutating=true)
  end
 
+ shrink(b,μ) = sign(b)*max(abs(b)-μ,0) # soft thresholding
+ """
+  Use ADMM to solve
 
-#function admm_solver()
-#β=0.01; ρ=2; Niter = 100;
-#X = Y; Z = 0*∂*X; λ = 0*Z
-#obj       = [ objfun(X,Z) ]
-#residuals = [ residual(X,Z)]
-#B = [ A; ρ^(1/2)*∂]
-#for j=1:Niter
-#    X = F'*opDiagonal(1 ./(abs2.(vec(FK)) + ρ*vec(abs2.(FKD1)) +  ρ*vec(abs2.(FKD2))))*F*B'*[Y
-#             ρ^(1/2)*(Z - λ/ρ)]
-#    Z = shrink.(∂*X+λ/ρ,β/ρ)
-#    λ = λ + ρ*(∂*X - Z)
-#    push!(obj,objfun(X,Z))
-#    push!(residuals,residual(X,Z))
-#end
-#end
-#
+   minimize || A u - d ||_2^2 + ||R u||_1
+
+  Inputs:
+    A     system matrix
+    R     regularization matrix (includes reg. parameter)
+    d     data / right handside
+    u0    initial guess for u
+    pinvB least square solver for augmented B = [A; sqrt(ρ)*R]
+    ρ     (default 2) augmented Lagrangian parameter, the larger the closer z tracks R*u
+    Niter (default 10) max number of iterations
+    verbose (defaults false) whether to collect convergence stats
+    check_convergence function (u,z,y) -> Boolean that indicates whether
+                      we should stop iterations. the default behavior is
+                      to run for max number of iterations Niter
+
+  Outputs: (named tuple)
+    u         solution u
+    z         tracks R*u
+    y         Lagrange multipliers
+    obj       objective function record
+    residuals residual record
+ """
+ function admm_solver(A,R,d,u0,pinvB,ρ=2,Niter=10,verbose=false,check_convergence=(u,z,y)->false)
+  objfun(u,z) = norm(A*x-d)/2 + norm(R*z,1)
+  residual(u,z) = norm(R*u-z)
+  u = u0; z = 0*R*u; y = 0*z
+  B = [ A
+        ρ^(1/2)*R]
+  obj = residuals = []
+  verbose && (obj       = [ objfun(u,z) ])
+  verbose && (residuals = [ residual(u,z)])
+  for j=1:Niter
+      # solve augmented least squares problem
+      b = [y
+           ρ^(1/2)*(z - y/ρ)]
+      u = pinvB*b
+      # solve L2 regularized L1 problem
+      z = shrink.(R*u+y/ρ,1/ρ)
+      # dual update
+      y .+= y + ρ*(R*u - z)
+      verbose && push!(obj,objfun(u,z))
+      verbose && push!(residuals,residual(u,z))
+      check_convergence(u,z,y) && break
+  end
+  return (u=u,z=z,y=y,obj=obj,residuals=residuals)
+ end
+
 end#module
