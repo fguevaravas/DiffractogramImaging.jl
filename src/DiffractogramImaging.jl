@@ -314,6 +314,8 @@ module DiffractogramImaging
   @assert all(size(a[1]) .== (n1*n2,n1*n2))
   @assert nblocks(a[1]) == q1*q2
 
+  β = (N>1)*β # to handle case N==1
+
   ## Constructing M as PCC by blocks
   # diagonal blocks of M as PCC
   d1 = rk_periodic_derivative(1,(n1,n2))
@@ -421,7 +423,7 @@ module DiffractogramImaging
 
   mulh!(y,x) = @error("not implemented")
 
-  return LinearMap{ComplexF64}(mul!,mulh!,N*n1*n2,4N*n1*n2,ismutating=true),B,Minv,Einv # Temporarily returning
+  return LinearMap{ComplexF64}(mul!,mulh!,N*n1*n2,4N*n1*n2,ismutating=true)
  end
 
 

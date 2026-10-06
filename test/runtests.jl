@@ -103,6 +103,40 @@ function test_M(n1,n2,N,α,β,γ)
  @test relerr(y,y_) ≈ 0 atol=1e-10
 end
 
+
+# check both representations for M. Full matrices so only small sizes!!
+function test_M_full(p1,p2,q1,q2,N,α=1,β=2,γ=3)
+ n1 = p1*q1; n2 = p2*q2
+ # dense transforms!
+ Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
+ F = Matrix(DI.linmap_F(n1,n2))
+
+ # M with block diagonals
+ D1 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(1,(n1,n2))),p1,p2,q1,q2)
+ D2 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(2,(n1,n2))),p1,p2,q1,q2)
+ D̂1 = DI.pcc2d_to_BlockDiagonal(D1)
+ D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
+ L = D̂1'*D̂1 + D̂2'*D̂2
+ LN = neumann_laplacian(N)
+ M̂1 = α^2*I(N)⊗L + (N>1)*β^2*LN⊗I(n1*n2) + γ^2*I
+ M1 = (I(N) ⊗ Q') * M̂1 * (I(N) ⊗ Q)
+
+ # M with FFTs
+ M2 = Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) * (I(N) ⊗ F))
+
+ # check matvec is same
+ x = randn(N*n1*n2) + im*randn(N*n1*n2)
+ y1 = M1*x
+ y2 = M2*x
+ @test relerr(y1,y2) ≈ 0 atol=1e-10
+
+ # check positive definiteness
+ M1inv = cholesky(Hermitian(M1),check=false)
+ M2inv = cholesky(Hermitian(M2),check=false)
+ @test issuccess(M1inv)
+ @test issuccess(M2inv)
+end
+
 # only tests on small sizes
 function test_rk_to_pcc2d(p,q)
  n = p .* q
@@ -125,16 +159,16 @@ function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  n1 = p1*q1; n2=p2*q2
  # generate fake a
  a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
- E = DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
+ E = Matrix(DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2))
 
- # dense M
+ # dense M as block diag matrix
  D1 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(1,(n1,n2))),p1,p2,q1,q2)
  D2 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(2,(n1,n2))),p1,p2,q1,q2)
  D̂1 = DI.pcc2d_to_BlockDiagonal(D1)
  D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
  L = D̂1'*D̂1 + D̂2'*D̂2
- LN = neumann_laplacian(N) 
- M = ρ*(α^2*I(N)⊗L + β^2*LN⊗I(n1*n2) + γ^2*I)
+ LN = neumann_laplacian(N)
+ M = ρ*(α^2*I(N)⊗L + (N>1)*β^2*LN⊗I(n1*n2) + γ^2*I)
 
  A = hcat(a...) 
  x = randn(n1*n2) + im*randn(n1*n2)
@@ -142,45 +176,6 @@ function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  y_ = x + A*(M\(A'*x))
 
  @test relerr(y,y_) ≈ 0 atol=1e-10
-end
-
-# check both representations for M. Full matrices so only small sizes!!
-function test_M_full(p1,p2,q1,q2,N,α=1,β=2,γ=3)
- n1 = p1*q1; n2 = p2*q2
- # dense transforms!
- Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
- F = Matrix(DI.linmap_F(n1,n2))
-
- # M with block diagonals
- D1 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(1,(n1,n2))),p1,p2,q1,q2)
- D2 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(2,(n1,n2))),p1,p2,q1,q2)
- D̂1 = DI.pcc2d_to_BlockDiagonal(D1)
- D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
- L = D̂1'*D̂1 + D̂2'*D̂2
- LN = neumann_laplacian(N)
- M̂1 = α^2*I(N)⊗L + β^2*LN⊗I(n1*n2) + γ^2*I
- M1 = (I(N) ⊗ Q') * M̂1 * (I(N) ⊗ Q)
-
- # M with FFTs
- D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
- D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
- L = diagm(vec(abs2.(D1) + abs2.(D2)))
- LN = neumann_laplacian(N) 
- M̂2 = α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I
- M2 = (I(N) ⊗ F') * M̂2  * (I(N) ⊗ F)
-
- x = randn(N*n1*n2) + im*randn(N*n1*n2)
- 
- y1 = M1*x
- y2 = M2*x
-
- @test relerr(y1,y2) ≈ 0 atol=1e-10
-
- # check positive definiteness
- M1inv = cholesky(Hermitian(M1),check=false)
- M2inv = cholesky(Hermitian(M2),check=false)
- @test issuccess(M1inv)
- @test issuccess(M2inv)
 end
 
 # another test for E: checks equality including all the
@@ -202,9 +197,9 @@ function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
  L = diagm(vec(abs2.(D1) + abs2.(D2)))
  LN = neumann_laplacian(N)
- M̂ = ρ*(α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)
-
+ M̂ = ρ*(α^2 * I(N) ⊗ L + (N>1)*β^2 * LN ⊗ I(n1*n2) + γ^2*I)
  M = (I(N) ⊗ F') * M̂ * (I(N) ⊗ F)
+ #M = Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) * (I(N) ⊗ F))
 
  A = Q' * hcat(a...) * (I(N) ⊗ Q)  
  
@@ -296,9 +291,6 @@ function test_augmented_ls_solver(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  # test SMW for pseudoinverse
  BBi1 = inv(B'*B) # expensive
  
- println("size E ",size(E))
- println("size M ",size(M))
- println("size A ",size(A))
  BBi2 = inv(ρ*M) - inv(ρ*M)*A'*inv(E)*A*inv(ρ*M)
  @test norm(BBi1- BBi2)≈0 atol=1e-10
 
@@ -318,7 +310,7 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
-if false #################################
+#if false #################################
 @testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
@@ -349,9 +341,9 @@ end
 
 
 @testset "testing M full" begin
-  test_M_full(3,4,2,3,1)#,2,2,100)
-  #test_M_full(3,4,2,3,2)
-  #test_M_full(3,4,2,3,3)
+  test_M_full(3,4,2,3,1)
+  test_M_full(3,4,2,3,2)
+  test_M_full(3,4,2,3,3)
 end
 
 
@@ -404,7 +396,7 @@ end
   test_Q_N(c...)
  end
 end
-end ##################
+#end ##################
 
 @testset "augment LS solver" begin
   α,β,γ,ρ = 1,2,3,5
