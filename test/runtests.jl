@@ -30,6 +30,20 @@ function test_F(n)
  @test relerr(x,x_) ≈ 0 atol=1e-10
 end
 
+# only small sizes
+function test_Q_N(p,q,N)
+ Q = DI.linmap_Q_N(p...,q...,N)
+ Q_ = I(N) ⊗ DI.linmap_Q(p...,q...)
+ @test norm(Matrix(Q) - Matrix(Q_)) ≈ 0 atol=1e-10
+end
+
+# only small sizes
+function test_F_N(n,N)
+ F = DI.linmap_F_N(n...,N)
+ F_ = I(N) ⊗ DI.linmap_F(n...)
+ @test norm(Matrix(F) - Matrix(F_)) ≈ 0 atol=1e-10
+end
+
 # use only for small sizes: tests convolution theorem
 function test_conv(n)
  k = randn(n...)+1im*randn(n...)
@@ -253,53 +267,44 @@ function test_R(n1,n2,N,α=1,β=2,γ=3)
  @test relerr(y1,y2) ≈ 0 atol=1e-10
 
  # check R'*R = M
- # M with FFTs
  F = Matrix(DI.linmap_F(n1,n2)) # dense!!
- D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
- D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
- L = diagm(vec(abs2.(D1) + abs2.(D2)))
- LN = neumann_laplacian(N)
- M̂ = α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I
- M = (I(N) ⊗ F') * M̂  * (I(N) ⊗ F)
-
- println(norm(R2'*R2 - M))
+ M̂ = DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) 
+ M = Matrix((I(N) ⊗ F') * M̂  * (I(N) ⊗ F))
 
  @test norm(R2'*R2 - M)≈0 atol=1e-10
- 
-
 end
 
 # this is only for small sizes!!
 function test_augmented_ls_solver(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
-
+ @assert ρ>0
  n1 = p1*q1; n2=p2*q2
  # generate fake a
  a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
  # dense transforms!
  Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
  F = Matrix(DI.linmap_F(n1,n2))
- A = Q' * hcat(a...) * (I(N) ⊗ Q)  
-
- D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
- D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
- L = diagm(vec(abs2.(D1) + abs2.(D2)))
- LN = neumann_laplacian(N)
- M̂ = ρ*(α^2 * I(N) ⊗ L + β^2 * LN ⊗ I(n1*n2) + γ^2*I)
-
- M = (I(N) ⊗ F') * M̂ * (I(N) ⊗ F)
-
+ A = Matrix(Q' * hcat(a...) * (I(N) ⊗ Q))
+ R = Matrix(DI.linmap_R(n1,n2,N,α,β,γ))
+ M = Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) * (I(N) ⊗ F))
+ E_ = Matrix(DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2))
  B = [ A
-       M ]
+       sqrt(ρ)*R  ]
 
- b = randn((N+1)*n1*n2) + im*randn((N+1)*n1*n2)
+ E = I+A*inv(ρ*M)*A'
+ @test norm(E-Q'*E_*Q)≈0 atol=1e-10
 
- x = (B'*B)\(B'*b)
+ # test SMW for pseudoinverse
+ BBi1 = inv(B'*B) # expensive
+ 
+ println("size E ",size(E))
+ println("size M ",size(M))
+ println("size A ",size(A))
+ BBi2 = inv(ρ*M) - inv(ρ*M)*A'*inv(E)*A*inv(ρ*M)
+ @test norm(BBi1- BBi2)≈0 atol=1e-10
 
- BhBiBh = DI.linmap_augmented_ls_solver(p1,p2,q1,q2,a,α,β,γ,ρ)
- println("size = ",size(BhBiBh))
- x_ = BhBiBh*b
-
- @test relerr(x,x_) ≈ 0 atol=1e-10
+ pinvB1 = BBi1*B'
+ pinvB2 = Matrix(DI.linmap_augmented_ls_solver(p1,p2,q1,q2,a,α,β,γ,ρ))
+ @test norm(pinvB1 - pinvB2)≈0 atol=1e-10
 end
 
 ########################################################################
@@ -313,7 +318,7 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
-#if false #################################
+if false #################################
 @testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
@@ -387,10 +392,23 @@ end
  test_R(10,11,2)
  test_R(11,10,4)
 end
-#end ##################
+
+@testset "multifreq versions of Q and F" begin
+ cases = [
+  (p=(2,2),q=(3,3),N=3),
+  (p=(2,2),q=(3,3),N=3),
+  (p=(3,2),q=(5,3),N=1) ]
+ for c ∈ cases
+  n = c.p .* c.q
+  test_F_N(n,c.N)
+  test_Q_N(c...)
+ end
+end
+end ##################
 
 @testset "augment LS solver" begin
-  #test_augmented_ls_solver(3,4,2,3,2)
-  #test_augmented_ls_solver(3,4,2,3,4)
+  α,β,γ,ρ = 1,2,3,5
+  test_augmented_ls_solver(3,4,2,3,2,α,β,γ,ρ)
+  test_augmented_ls_solver(3,4,2,3,4,α,β,γ,ρ)
 end
 

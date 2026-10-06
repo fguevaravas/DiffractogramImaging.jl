@@ -23,7 +23,6 @@ module DiffractogramImaging
   end
 
   function Qmulh!(x,y)
-   @assert( length(y) == n1*n2 && length(x) == n1*n2 )
    y = reshape(y,p1,p2,q1,q2)
    x = reshape(x,p1,q1,p2,q2)
    permutedims!(x,y,(1,3,2,4))
@@ -34,6 +33,31 @@ module DiffractogramImaging
   return LinearMap{T}(Qmul!,Qmulh!,n1*n2,n1*n2,ismutating=true)
  end
  linmap_Q(p1,p2,q1,q2) = linmap_Q(ComplexF64,p1,p2,q1,q2) 
+ 
+ """
+  calculates I(N) ⊗ Q
+ """
+ function linmap_Q_N(::Type{T},p1,p2,q1,q2,N) where {T<:fftwComplex}
+  n1 = p1*q1; n2 = p2*q2;
+  function Qmul!(y,x)
+   x = reshape(x,p1,q1,p2,q2,N)
+   y = reshape(y,p1,p2,q1,q2,N)
+   x̂ = fft(x,(2,4))/sqrt(q1*q2)
+   permutedims!(y,x̂,(1,3,2,4,5))
+   return vec(y)
+  end
+
+  function Qmulh!(x,y)
+   y = reshape(y,p1,p2,q1,q2,N)
+   x = reshape(x,p1,q1,p2,q2,N)
+   permutedims!(x,y,(1,3,2,4,5))
+   bfft!(x,(2,4))
+   x./=sqrt(q1*q2)
+   return vec(x)
+  end
+  return LinearMap{T}(Qmul!,Qmulh!,n1*n2*N,n1*n2*N,ismutating=true)
+ end
+ linmap_Q_N(p1,p2,q1,q2,N) = linmap_Q_N(ComplexF64,p1,p2,q1,q2,N) 
 
  """
   Encapsulate the unitary  discrete Fourier transform
@@ -61,6 +85,29 @@ module DiffractogramImaging
   return LinearMap{T}(Fmul!,Fmulh!,n1*n2,n1*n2,ismutating=true)
  end
  linmap_F(n1,n2) = linmap_F(ComplexF64,n1,n2)
+
+ """
+ calculates I(N) ⊗ F
+ """
+ function linmap_F_N(::Type{T},n1,n2,N) where {T<:fftwComplex}
+  function Fmul!(y,x)
+   y = reshape(y,n1,n2,N)
+   x = reshape(x,n1,n2,N)
+   y .= x/sqrt(n1*n2)
+   fft!(y,(1,2))
+   return vec(y)
+  end
+
+  function Fmulh!(y,x)
+   y = reshape(y,n1,n2,N)
+   x = reshape(x,n1,n2,N)
+   y .= x/sqrt(n1*n2)
+   bfft!(y,(1,2))
+   return vec(y)
+  end
+  return LinearMap{T}(Fmul!,Fmulh!,n1*n2*N,n1*n2*N,ismutating=true)
+ end
+ linmap_F_N(n1,n2,N) = linmap_F_N(ComplexF64,n1,n2,N)
 
   """
   block matrix representation of a kernel
@@ -350,27 +397,31 @@ module DiffractogramImaging
   n1 = p1*q1; n2 = p2*q2
   N = length(a)
   Q = linmap_Q(p1,p2,q1,q2)
-  F = linmap_F(n1,n2)
+  Q_N = linmap_Q_N(p1,p2,q1,q2,N)
+  F_N = linmap_F_N(n1,n2,N)
   R = linmap_R(n1,n2,N,α,β,γ)
-  Minv = (I(N) ⊗ F')*linmap_M_blktrdiag_solve(n1,n2,N,α,β,γ)*(I(N) ⊗ F)
+  Minv = (1/ρ) * F_N'*linmap_M_blktrdiag_solve(n1,n2,N,α,β,γ)*F_N
   E = BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
 
-  # compute Cholesky factor of E
+  # precompute Cholesky factor of E
   Einv = cholesky(E)
 
-  A =  hcat([Q'*a[i]*Q for i=1:N]...)
-  B = [ A
+  # this saves 4 applications of Q that cancel out when calculating the SMW
+  # formula
+  Â =  hcat([a[i] for i=1:N]...)
+  QA = Â*Q_N # == Q*A
+  B = [ Q'*QA
         sqrt(ρ)*R ]
   
   # this is where the Sherman-Morrison-Woodbury formula is used
   function mul!(y,x)
    u = Minv*B'*x
-   y .= u - Minv*A'*(Einv\(A*u))
+   y .= u - Minv*QA'*(Einv\(QA*u))
   end
 
   mulh!(y,x) = @error("not implemented")
 
-  return LinearMap{ComplexF64}(mul!,mulh!,N*n1*n2,4N*n1*n2,ismutating=true)
+  return LinearMap{ComplexF64}(mul!,mulh!,N*n1*n2,4N*n1*n2,ismutating=true),B,Minv,Einv # Temporarily returning
  end
 
 
