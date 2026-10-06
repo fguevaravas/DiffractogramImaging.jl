@@ -182,27 +182,16 @@ end
 # unitary transformations. ONLY small sizes
 function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  n1 = p1*q1; n2=p2*q2
- # generate fake a
- a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
- Ẽ = DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
-
  # dense transforms!
  Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
  F = Matrix(DI.linmap_F(n1,n2))
- 
-
+ # generate fake a
+ a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
+ Ẽ = DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
  E = Q'*Ẽ*Q
 
- D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
- D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
- L = diagm(vec(abs2.(D1) + abs2.(D2)))
- LN = neumann_laplacian(N)
- M̂ = ρ*(α^2 * I(N) ⊗ L + (N>1)*β^2 * LN ⊗ I(n1*n2) + γ^2*I)
- M = (I(N) ⊗ F') * M̂ * (I(N) ⊗ F)
- #M = Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) * (I(N) ⊗ F))
-
+ M = ρ*Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) * (I(N) ⊗ F))
  A = Q' * hcat(a...) * (I(N) ⊗ Q)  
- 
  E_ = I + A*(M\(A'))
 
  x =randn(n1*n2) + 1im*rand(n1*n2)
@@ -221,24 +210,15 @@ end
 # this is only for small sizes
 function test_R(n1,n2,N,α=1,β=2,γ=3)
  R1 = DI.linmap_R(n1,n2,N,α,β,γ)
- # periodic difference matrix
+ # periodic (forward) difference matrix
  function Dp(n)
-  res = zeros(n,n)
-  for i=1:n-1
-   res[i,[i,i+1]] = [-1 1]
-  end
-  res[n,[n,1]] = [-1,1]
+  res = diagm(0=>-ones(n),1=>ones(n-1))
+  res[n,1]=1
   return res
  end
 
- # difference matrix
- function D(n)
-  res =  zeros(n-1,n)
-  for i=1:n-1
-   res[i,[i,i+1]] = [-1 1]
-  end
-  return res
- end
+ # (forward) difference matrix of size n-1 x n
+ D(n)= diagm(n-1,n,0=>-ones(n-1),1=>ones(n-1))
  
  D1 = I(N) ⊗ I(n2) ⊗ Dp(n1)
  D2 = I(N) ⊗ Dp(n2) ⊗ I(n1)
@@ -396,11 +376,12 @@ end
   test_Q_N(c...)
  end
 end
-#end ##################
 
 @testset "augment LS solver" begin
   α,β,γ,ρ = 1,2,3,5
   test_augmented_ls_solver(3,4,2,3,2,α,β,γ,ρ)
   test_augmented_ls_solver(3,4,2,3,4,α,β,γ,ρ)
 end
+
+#end ##################
 
