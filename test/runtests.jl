@@ -1,5 +1,5 @@
 using DiffractogramImaging, PCC, Test, LinearAlgebra, FFTW
-using BlockDiagonals, LinearMaps
+using BlockDiagonals, LinearMaps, Random
 ⊗ = LinearAlgebra.kron
 DI = DiffractogramImaging
 relerr(a,b) = norm(a-b)/norm(a)
@@ -279,6 +279,7 @@ function test_augmented_ls_solver(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  @test norm(pinvB1 - pinvB2)≈0 atol=1e-10
 end
 
+
 ########################################################################
 
 test_cases = [
@@ -290,7 +291,7 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
-#if false #################################
+if false #################################
 @testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
@@ -383,5 +384,6 @@ end
   test_augmented_ls_solver(3,4,2,3,4,α,β,γ,ρ)
 end
 
-#end ##################
+
+end ##################
 

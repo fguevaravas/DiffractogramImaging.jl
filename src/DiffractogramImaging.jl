@@ -1,5 +1,5 @@
 module DiffractogramImaging
- using LinearMaps, FFTW, LinearAlgebra, BlockDiagonals
+ using LinearMaps, FFTW, LinearAlgebra, BlockDiagonals,Random
  ⊗ = LinearAlgebra.kron 
  fftwComplex = FFTW.fftwComplex
  
@@ -435,7 +435,7 @@ module DiffractogramImaging
   Inputs:
     A     system matrix
     R     regularization matrix (includes reg. parameter)
-    d     data / right handside
+    v     data / right handside
     u0    initial guess for u
     pinvB least square solver for augmented B = [A; sqrt(ρ)*R]
     ρ     (default 2) augmented Lagrangian parameter, the larger the closer z tracks R*u
@@ -452,29 +452,100 @@ module DiffractogramImaging
     obj       objective function record
     residuals residual record
  """
- function admm_solver(A,R,d,u0,pinvB,ρ=2,Niter=10,verbose=false,check_convergence=(u,z,y)->false)
-  objfun(u,z) = norm(A*x-d)/2 + norm(R*z,1)
-  residual(u,z) = norm(R*u-z)
+
+ # NOTE to self: adding the alpha to the regularization matrix is a bad idea as it modifies 
+ # the least sqaures problems that we're solving. the regularization parameters should
+ # therefore appear in the shrink operation
+ # we can keep pointers and different values i.e.
+ # p(1) = 1
+ # p(2) = N*n1*n2+1
+ # p(3) = 2N*n1*n2+1
+ # p(4) = (3N-1)*n1*n2+1
+ # p(5) = (4N-1)*n1*n2+1
+ # and αs(1) = α, αs(2) = α, αs(3) = β, α(4) = γ
+ # for the four different regions
+   y[:,:,1:N] .= α*(x[d1,:,:] - x)
+   y[:,:,N.+(1:N)] .= α*(x[:,d2,:] - x)
+   y[:,:,2N.+(1:N-1)] .= β*(x[:,:,2:N] - x[:,:,1:N-1])
+   y[:,:,(3N-1).+(1:N)] .= γ*x
+
+ function admm_solver(A,v,u0,ρ,R,pinvB;Niter=10,verbose=false,check_convergence=(u,z,y)->false)
+  objfun(u,z) = norm(A*u-v)^2/2 + norm(z,1)
+  residual(u,z) = norm(R*u-z)^2
+  auglag(u,z,y) = norm(A*u-v)^2/2 + norm(z,1) + (ρ/2)*norm(R*u-z)^2 + y'*(R*u-z)
+
   u = u0; z = 0*R*u; y = 0*z
-  B = [ A
-        ρ^(1/2)*R]
-  obj = residuals = []
+  #B = [ A
+  #      ρ^(1/2)*R]
+  obj = residuals = auglags = []
   verbose && (obj       = [ objfun(u,z) ])
   verbose && (residuals = [ residual(u,z)])
+  verbose && (auglags = [ auglag(u,z,y)])
+
+  #println("at 0 ",auglag(u,z,y)," ",objfun(u,z)," ",residual(u,z))
   for j=1:Niter
       # solve augmented least squares problem
-      b = [y
+      b = [v
            ρ^(1/2)*(z - y/ρ)]
-      u = pinvB*b
+      u .= pinvB*b
+      #u = B\b
+      u = (A'*A + ρ*R)\(A'*v + ρ*z - y)
+      #println("LS  ",auglag(u,z,y)," ",objfun(u,z)," ",residual(u,z))
+
       # solve L2 regularized L1 problem
-      z = shrink.(R*u+y/ρ,1/ρ)
+      z .= shrink.(R*u+y/ρ,1/ρ)
+      #println("shk ",auglag(u,z,y)," ",objfun(u,z)," ",residual(u,z))
+
       # dual update
-      y .+= y + ρ*(R*u - z)
+      y .+= ρ*(R*u - z)
+      println("auglag = ",auglag(u,z,y)," objfun = ",objfun(u,z)," res = ",residual(u,z))
       verbose && push!(obj,objfun(u,z))
       verbose && push!(residuals,residual(u,z))
+      verbose && push!(auglags,auglag(u,z,y))
       check_convergence(u,z,y) && break
   end
   return (u=u,z=z,y=y,obj=obj,residuals=residuals)
  end
+ 
+ function lasso(A,b,x0,λ,ρ,Niter)
+  objfun(x,z) = norm(A*x-b)^2/2 + λ*norm(z,1)
+  residual(x,z) = norm(x-z)^2
+  auglag(x,z,y) = norm(A*x-b)^2/2 + λ*norm(z,1) + (ρ/2)*norm(x-z)^2 + y'*(x-z)
+
+  x = x0; z=zero(x0); y=zero(x0)
+  for j=1:Niter
+   x = (A'*A+ρ*I)\(A'*b + ρ*z - y)
+   z = shrink.(x+y/ρ,λ/ρ)
+      println(sum(z))
+   y = y + ρ*(x-z)
+   println("auglag = ",auglag(x,z,y)," objfun = ",objfun(x,z)," res = ",residual(x,z))
+  end
+  return x
+ end
+
+ # α = 0.05*norm(A'*d,Inf) and ρ = 0.05 seem to do a good job with Lasso
+ function test_admm_solver(α,ρ,noise,Niter)
+ n,m = 120,512
+ p = 20 # number of samples 
+ Random.seed!(17)
+ A = randn(n,m)
+ Q,_ = qr(A')
+ A = Matrix(Q)'
+ xtrue = zeros(m)
+ xtrue[rand(1:m,p)] .= rand([-1,1],p)
+ u0 = randn(m)
+ #u0 = xtrue + 1e-1*randn(m)
+ d = A*xtrue + noise*randn(n)
+
+ α = norm(A'*d,Inf)*α
+ R = α*I(m)
+ B = [A;ρ^(1/2)*R]
+ pinvB = pinv(B)
+ println("α =  $α")
+ #u = lasso(A,d,u0,α,ρ,2)
+ #println("--------------")
+ r = admm_solver(A,d,u0,ρ,R,pinvB,verbose=true,Niter=20)
+ return r.u,xtrue
+end
 
 end#module
