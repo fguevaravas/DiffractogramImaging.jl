@@ -5,10 +5,14 @@ DI = DiffractogramImaging
 relerr(a,b) = norm(a-b)/norm(a)
 
 # Calculates Neumann 1D Laplacian of size N.  The case N=1 is not well defined
-# but this function returns [1]
+# but this function returns [0]
 function neumann_laplacian(N)
- LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
- LN[1,1]=1; LN[N,N]=1; # use Neumann conditions
+ if N>1
+  LN = diagm(0=>2*ones(N),-1=>-ones(N-1),1=>-ones(N-1))
+  LN[1,1]=1; LN[N,N]=1; # use Neumann conditions
+ else
+  LN = zeros(1,1)
+ end
  return LN
 end
 
@@ -78,9 +82,9 @@ function test_pcc2d(p,q)
  @test relerr(y,y_) ≈ 0 atol=1e-10
 end
 
-function test_M_solve(n1,n2,N,α,β,γ)
- M = DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ)
- Minv = DI.linmap_M_blktrdiag_solve(n1,n2,N,α,β,γ)
+function test_M_solve(n1,n2,N)
+ M = DI.linmap_M_blktrdiag(n1,n2,N)
+ Minv = DI.linmap_M_blktrdiag_solve(n1,n2,N)
 
  x = randn(N*n1*n2) + 1im*randn(N*n1*n2)
  x_ = Minv*M*x
@@ -90,13 +94,13 @@ function test_M_solve(n1,n2,N,α,β,γ)
 end
 
 # we build M explicitly so only do this for small sizes
-function test_M(n1,n2,N,α,β,γ)
+function test_M(n1,n2,N)
  D1 = fft(DI.rk_periodic_derivative(1,(n1,n2)))
  D2 = fft(DI.rk_periodic_derivative(2,(n1,n2)))
  L = diagm(vec(abs2.(D1) + abs2.(D2)))
  LN = neumann_laplacian(N)
- M = α^2 * I(N) ⊗ L + (N>1)*β^2 * LN ⊗ I(n1*n2) + γ^2*I
- M_ =  DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ)
+ M = I(N) ⊗ L + LN ⊗ I(n1*n2) + I
+ M_ =  DI.linmap_M_blktrdiag(n1,n2,N)
  x = randn(N*n1*n2) + 1im*randn(N*n1*n2)
  y = M*x
  y_ = M_*x
@@ -105,7 +109,7 @@ end
 
 
 # check both representations for M. Full matrices so only small sizes!!
-function test_M_full(p1,p2,q1,q2,N,α=1,β=2,γ=3)
+function test_M_full(p1,p2,q1,q2,N)
  n1 = p1*q1; n2 = p2*q2
  # dense transforms!
  Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
@@ -118,11 +122,11 @@ function test_M_full(p1,p2,q1,q2,N,α=1,β=2,γ=3)
  D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
  L = D̂1'*D̂1 + D̂2'*D̂2
  LN = neumann_laplacian(N)
- M̂1 = α^2*I(N)⊗L + (N>1)*β^2*LN⊗I(n1*n2) + γ^2*I
+ M̂1 = I(N)⊗L + LN⊗I(n1*n2) + I
  M1 = (I(N) ⊗ Q') * M̂1 * (I(N) ⊗ Q)
 
  # M with FFTs
- M2 = Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) * (I(N) ⊗ F))
+ M2 = Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N) * (I(N) ⊗ F))
 
  # check matvec is same
  x = randn(N*n1*n2) + im*randn(N*n1*n2)
@@ -155,11 +159,11 @@ function test_rk_to_pcc2d(p,q)
 end
 
 # we build E explicity, so do this only for small sizes
-function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
+function test_E(p1,p2,q1,q2,N,ρ=5)
  n1 = p1*q1; n2=p2*q2
  # generate fake a
  a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
- E = Matrix(DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2))
+ E = Matrix(DI.BlockDiagonal_E(a,ρ,p1,p2,q1,q2))
 
  # dense M as block diag matrix
  D1 = DI.rk_to_pcc2d((DI.rk_periodic_derivative(1,(n1,n2))),p1,p2,q1,q2)
@@ -168,7 +172,7 @@ function test_E(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  D̂2 = DI.pcc2d_to_BlockDiagonal(D2)
  L = D̂1'*D̂1 + D̂2'*D̂2
  LN = neumann_laplacian(N)
- M = ρ*(α^2*I(N)⊗L + (N>1)*β^2*LN⊗I(n1*n2) + γ^2*I)
+ M = ρ*(I(N)⊗L + LN⊗I(n1*n2) + I)
 
  A = hcat(a...) 
  x = randn(n1*n2) + im*randn(n1*n2)
@@ -180,17 +184,17 @@ end
 
 # another test for E: checks equality including all the
 # unitary transformations. ONLY small sizes
-function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
+function test_E_full(p1,p2,q1,q2,N,ρ=5)
  n1 = p1*q1; n2=p2*q2
  # dense transforms!
  Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
  F = Matrix(DI.linmap_F(n1,n2))
  # generate fake a
  a = [ BlockDiagonal([ randn(p1*p2,p1*p2) + im*randn(p1*p2,p1*p2) for j=1:q1*q2]) for i=1:N]
- Ẽ = DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2)
+ Ẽ = DI.BlockDiagonal_E(a,ρ,p1,p2,q1,q2)
  E = Q'*Ẽ*Q
 
- M = ρ*Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) * (I(N) ⊗ F))
+ M = ρ*Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N) * (I(N) ⊗ F))
  A = Q' * hcat(a...) * (I(N) ⊗ Q)  
  E_ = I + A*(M\(A'))
 
@@ -208,8 +212,8 @@ function test_E_full(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
 end
 
 # this is only for small sizes
-function test_R(n1,n2,N,α=1,β=2,γ=3)
- R1 = DI.linmap_R(n1,n2,N,α,β,γ)
+function test_R(n1,n2,N)
+ R1 = DI.linmap_R(n1,n2,N)
  # periodic (forward) difference matrix
  function Dp(n)
   res = diagm(0=>-ones(n),1=>ones(n-1))
@@ -224,10 +228,10 @@ function test_R(n1,n2,N,α=1,β=2,γ=3)
  D2 = I(N) ⊗ Dp(n2) ⊗ I(n1)
  DN = D(N) ⊗ I(n1*n2)
 
- R2 = [α*D1 
-       α*D2
-       β*DN
-       γ*I ]
+ R2 = [D1 
+       D2
+       DN
+       I ]
 
  # check R
  x = randn(n1*n2*N) + 1im*randn(n1*n2*N)
@@ -243,14 +247,14 @@ function test_R(n1,n2,N,α=1,β=2,γ=3)
 
  # check R'*R = M
  F = Matrix(DI.linmap_F(n1,n2)) # dense!!
- M̂ = DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) 
+ M̂ = DI.linmap_M_blktrdiag(n1,n2,N) 
  M = Matrix((I(N) ⊗ F') * M̂  * (I(N) ⊗ F))
 
  @test norm(R2'*R2 - M)≈0 atol=1e-10
 end
 
 # this is only for small sizes!!
-function test_augmented_ls_solver(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
+function test_augmented_ls_solver(p1,p2,q1,q2,N,ρ=5)
  @assert ρ>0
  n1 = p1*q1; n2=p2*q2
  # generate fake a
@@ -259,9 +263,9 @@ function test_augmented_ls_solver(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  Q = Matrix(DI.linmap_Q(p1,p2,q1,q2))
  F = Matrix(DI.linmap_F(n1,n2))
  A = Matrix(Q' * hcat(a...) * (I(N) ⊗ Q))
- R = Matrix(DI.linmap_R(n1,n2,N,α,β,γ))
- M = Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N,α,β,γ) * (I(N) ⊗ F))
- E_ = Matrix(DI.BlockDiagonal_E(a,α,β,γ,ρ,p1,p2,q1,q2))
+ R = Matrix(DI.linmap_R(n1,n2,N))
+ M = Matrix((I(N) ⊗ F') * DI.linmap_M_blktrdiag(n1,n2,N) * (I(N) ⊗ F))
+ E_ = Matrix(DI.BlockDiagonal_E(a,ρ,p1,p2,q1,q2))
  B = [ A
        sqrt(ρ)*R  ]
 
@@ -275,7 +279,7 @@ function test_augmented_ls_solver(p1,p2,q1,q2,N,α=1,β=2,γ=3,ρ=5)
  @test norm(BBi1- BBi2)≈0 atol=1e-10
 
  pinvB1 = BBi1*B'
- pinvB2 = Matrix(DI.linmap_augmented_ls_solver(p1,p2,q1,q2,a,α,β,γ,ρ))
+ pinvB2 = Matrix(DI.linmap_augmented_ls_solver(p1,p2,q1,q2,a,ρ))
  @test norm(pinvB1 - pinvB2)≈0 atol=1e-10
 end
 
@@ -291,7 +295,6 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
-if false #################################
 @testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
@@ -314,10 +317,10 @@ end
 end
 
 @testset "testing M" begin
- test_M(12,24,1,3,2,1)
- test_M(12,24,2,3,2,1)
- test_M(12,24,4,3,2,1)
- test_M(24,12,4,3,2,1)
+ test_M(12,24,1)
+ test_M(12,24,2)
+ test_M(12,24,4)
+ test_M(24,12,4)
 end
 
 
@@ -329,10 +332,10 @@ end
 
 
 @testset "testing M solve" begin
- test_M_solve(12,24,1,3,2,1)
- test_M_solve(12,24,2,3,2,1)
- test_M_solve(12,24,4,3,2,1)
- test_M_solve(24,12,4,3,2,1)
+ test_M_solve(12,24,1)
+ test_M_solve(12,24,2)
+ test_M_solve(12,24,4)
+ test_M_solve(24,12,4)
 end
 
 @testset "testing conv thm" begin
@@ -378,12 +381,10 @@ end
  end
 end
 
+if false #################################
 @testset "augment LS solver" begin
   α,β,γ,ρ = 1,2,3,5
   test_augmented_ls_solver(3,4,2,3,2,α,β,γ,ρ)
   test_augmented_ls_solver(3,4,2,3,4,α,β,γ,ρ)
 end
-
-
-end ##################
-
+end #######################
