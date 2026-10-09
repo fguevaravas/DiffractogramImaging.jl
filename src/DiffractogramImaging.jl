@@ -144,7 +144,6 @@ module DiffractogramImaging
    when N==1
  """
  function linmap_R(n1,n2,N)
-  
   d1 = circshift(1:n1,-1)
   d2 = circshift(1:n2,-1)
   d1t = circshift(1:n1,1)
@@ -171,6 +170,11 @@ module DiffractogramImaging
   end
   return LinearMap{ComplexF64}(mul!,mulh!,(4N-1)*n1*n2,N*n1*n2,ismutating=true)
  end
+ 
+ """
+  identifies the residuals to indices
+ """
+ residual_indices(n1,n2,N) = [1:N,N.+(1:N),2N.+(1:N-1),(3N-1).+(1:N)]
 
  """
  filter associated with derivative operator of a n-periodic signal
@@ -412,10 +416,13 @@ module DiffractogramImaging
   QA = Â*Q_N # == Q*A
   #B = [ Q'*QA
   #      sqrt(ρ)*R ]
+  #
+  nu = size(Q,1)
+  ny = size(R,1)
   
   # this is where the Sherman-Morrison-Woodbury formula is used
   function mul!(y,x)
-   u = (1/ρ)*Minv*(QA'*Q*x + sqrt(ρ)*R'*x) # = (1/ρ)*Minv*B'*x
+   u = (1/ρ)*Minv*(QA'*Q*x[1:nu] + sqrt(ρ)*R'*x[nu .+ (1:ny)]) # = (1/ρ)*Minv*B'*x
    y .= u - (1/ρ)*Minv*QA'*(Einv\(QA*u))
   end
 
@@ -433,10 +440,12 @@ module DiffractogramImaging
   Inputs:
     A     system matrix
     R     regularization matrix (includes reg. parameter)
+    αs    regularization parameters 
+    resmap residual map. y[resmap[i]] gives the indices associated with αs[i]
     v     data / right handside
     u0    initial guess for u
     pinvB least square solver for augmented B = [A; sqrt(ρ)*R]
-    ρ     (default 2) augmented Lagrangian parameter, the larger the closer z tracks R*u
+    ρ      augmented Lagrangian parameter, the larger the closer z tracks R*u
     Niter (default 10) max number of iterations
     verbose (defaults false) whether to collect convergence stats
     check_convergence function (u,z,y) -> Boolean that indicates whether
@@ -450,24 +459,7 @@ module DiffractogramImaging
     obj       objective function record
     residuals residual record
  """
-
- # NOTE to self: adding the alpha to the regularization matrix is a bad idea as it modifies 
- # the least sqaures problems that we're solving. the regularization parameters should
- # therefore appear in the shrink operation
- # we can keep pointers and different values i.e.
- # p(1) = 1
- # p(2) = N*n1*n2+1
- # p(3) = 2N*n1*n2+1
- # p(4) = (3N-1)*n1*n2+1
- # p(5) = (4N-1)*n1*n2+1
- # and αs(1) = α, αs(2) = α, αs(3) = β, α(4) = γ
- # for the four different regions
- #  y[:,:,1:N] .= α*(x[d1,:,:] - x)
- #  y[:,:,N.+(1:N)] .= α*(x[:,d2,:] - x)
- #  y[:,:,2N.+(1:N-1)] .= β*(x[:,:,2:N] - x[:,:,1:N-1])
- #  y[:,:,(3N-1).+(1:N)] .= γ*x
-
- function admm_solver(A,v,u0,ρ,R,pinvB;Niter=10,verbose=false,check_convergence=(u,z,y)->false)
+ function admm_solver(A,v,u0,ρ,R,resmap,αs,pinvB;Niter=10,verbose=false,check_convergence=(u,z,y)->false)
   objfun(u,z) = norm(A*u-v)^2/2 + norm(z,1)
   residual(u,z) = norm(R*u-z)^2
   auglag(u,z,y) = norm(A*u-v)^2/2 + norm(z,1) + (ρ/2)*norm(R*u-z)^2 + y'*(R*u-z)
@@ -486,64 +478,25 @@ module DiffractogramImaging
       b = [v
            ρ^(1/2)*(z - y/ρ)]
       u .= pinvB*b
-      #u = B\b
       u = (A'*A + ρ*R)\(A'*v + ρ*z - y)
-      #println("LS  ",auglag(u,z,y)," ",objfun(u,z)," ",residual(u,z))
 
       # solve L2 regularized L1 problem
-      z .= shrink.(R*u+y/ρ,1/ρ)
+      ru = R*u
+      for (iα,α) ∈ enumerate(αs)
+       z[resmap[iα]] .= shrink.(ru[resmap[iα]]+y[resmap[iα]]/ρ,α/ρ)
+      end
       #println("shk ",auglag(u,z,y)," ",objfun(u,z)," ",residual(u,z))
 
       # dual update
-      y .+= ρ*(R*u - z)
-      println("auglag = ",auglag(u,z,y)," objfun = ",objfun(u,z)," res = ",residual(u,z))
+      y .+= ρ*(ru - z)
+      verbose && println("auglag = ",auglag(u,z,y)," objfun = ",objfun(u,z)," res = ",residual(u,z))
       verbose && push!(obj,objfun(u,z))
       verbose && push!(residuals,residual(u,z))
       verbose && push!(auglags,auglag(u,z,y))
       check_convergence(u,z,y) && break
   end
-  return (u=u,z=z,y=y,obj=obj,residuals=residuals)
+  return (u=u,z=z,y=y,obj=obj,residuals=residuals,auglags=auglags)
  end
  
- function lasso(A,b,x0,λ,ρ,Niter)
-  objfun(x,z) = norm(A*x-b)^2/2 + λ*norm(z,1)
-  residual(x,z) = norm(x-z)^2
-  auglag(x,z,y) = norm(A*x-b)^2/2 + λ*norm(z,1) + (ρ/2)*norm(x-z)^2 + y'*(x-z)
-
-  x = x0; z=zero(x0); y=zero(x0)
-  for j=1:Niter
-   x = (A'*A+ρ*I)\(A'*b + ρ*z - y)
-   z = shrink.(x+y/ρ,λ/ρ)
-      println(sum(z))
-   y = y + ρ*(x-z)
-   println("auglag = ",auglag(x,z,y)," objfun = ",objfun(x,z)," res = ",residual(x,z))
-  end
-  return x
- end
-
- # α = 0.05*norm(A'*d,Inf) and ρ = 0.05 seem to do a good job with Lasso
- function test_admm_solver(α,ρ,noise,Niter)
- n,m = 120,512
- p = 20 # number of samples 
- Random.seed!(17)
- A = randn(n,m)
- Q,_ = qr(A')
- A = Matrix(Q)'
- xtrue = zeros(m)
- xtrue[rand(1:m,p)] .= rand([-1,1],p)
- u0 = randn(m)
- #u0 = xtrue + 1e-1*randn(m)
- d = A*xtrue + noise*randn(n)
-
- α = norm(A'*d,Inf)*α
- R = α*I(m)
- B = [A;ρ^(1/2)*R]
- pinvB = pinv(B)
- println("α =  $α")
- #u = lasso(A,d,u0,α,ρ,2)
- #println("--------------")
- r = admm_solver(A,d,u0,ρ,R,pinvB,verbose=true,Niter=20)
- return r.u,xtrue
-end
 
 end#module

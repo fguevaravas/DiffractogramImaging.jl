@@ -253,6 +253,31 @@ function test_R(n1,n2,N)
  @test norm(R2'*R2 - M)≈0 atol=1e-10
 end
 
+ # α = 0.05*norm(A'*d,Inf) and ρ = 0.05 seem to do a good job with Lasso
+function test_admm_solver()
+ α,ρ,noise,Niter = 0.01,2,1e-3,10
+ n,m = 120,512
+ p = 20 # number of samples 
+ Random.seed!(17)
+ A = randn(n,m)
+ Q,_ = qr(A')
+ A = Matrix(Q)'
+ xtrue = zeros(m)
+ xtrue[rand(1:m,p)] .= rand([-1,1],p)
+ u0 = randn(m)
+ #u0 = xtrue + 1e-1*randn(m)
+ d = A*xtrue + noise*randn(n)
+
+ α = norm(A'*d,Inf)*α
+ R = α*I(m)
+ B = [A;ρ^(1/2)*R]
+ pinvB = pinv(B)
+ αs = [α]; resmap = [1:m] # One single l1 term
+ r = DI.admm_solver(A,d,u0,ρ,R,resmap,αs,pinvB,verbose=false,Niter=20)
+ @test all(findall(abs.(xtrue).>0.5) .== findall(abs.(r.u).>0.5))
+end
+
+
 # this is only for small sizes!!
 function test_augmented_ls_solver(p1,p2,q1,q2,N,ρ=5)
  @assert ρ>0
@@ -381,10 +406,11 @@ end
  end
 end
 
-if false #################################
-@testset "augment LS solver" begin
-  α,β,γ,ρ = 1,2,3,5
-  test_augmented_ls_solver(3,4,2,3,2,α,β,γ,ρ)
-  test_augmented_ls_solver(3,4,2,3,4,α,β,γ,ρ)
+@testset "admm and  LS solver" begin
+  test_admm_solver()
+  ρ = 5
+  test_augmented_ls_solver(3,4,2,3,2,ρ)
+  test_augmented_ls_solver(3,4,2,3,4,ρ)
 end
-end #######################
+
+
