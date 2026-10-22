@@ -230,6 +230,23 @@ function test_linmap_blkdiag_hcat(p,q,N)
  @test relerr(x1,x2) ≈ 0 atol=1e-10
 end
 
+function test_linmap_blkdiag_cholesky(p,q)
+ n = p*q
+ function rand_hpd(p)
+  A = randn(p,p)
+  return A'*A
+ end
+ A = BlockDiagonal([ rand_hpd(p)  for j=1:q])
+ F = cholesky(A)
+ x = randn(n)
+ y = A*x
+ Ainv = DI.linmap_blkdiag_cholesky(A)
+ x1 = F\y
+ x2 = Ainv*y
+ @test relerr(x1,x) ≈ 0 atol=1e-5
+ @test relerr(x2,x) ≈ 0 atol=1e-5
+end
+
 # this is only for small sizes
 function test_R(n1,n2,N)
  R1 = DI.linmap_R(n1,n2,N)
@@ -339,11 +356,15 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
-@testset "testing hcat for blk diagonals" begin
+@testset "hcat for blk diagonals" begin
  test_linmap_blkdiag_hcat(3,4,4)
  test_linmap_blkdiag_hcat(3,4,1)
  test_linmap_blkdiag_hcat(3,1,4)
  test_linmap_blkdiag_hcat(3,1,1)
+end
+
+@testset "block cholesky solve" begin
+ test_linmap_blkdiag_cholesky(3,5)
 end
 
 @testset "testing Q" begin

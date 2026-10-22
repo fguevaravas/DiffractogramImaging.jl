@@ -332,6 +332,45 @@ module DiffractogramImaging
 
  const VectorBlockDiag{T} = Vector{BlockDiagonal{T, Matrix{T}}}
 
+ """ 
+  left division of two block diagonal matrices (for some reason 
+  backslash doesn't work well in this case)
+ """
+ function blkdiag_ldiv(A,B)
+  N = nblocks(A)
+  @assert nblocks(B) == N
+  @assert all(blocksizes(A)[1] .== blocksizes(B)[1])
+  @assert all(size(A) .== size(B))
+  a = blocks(A)
+  b = blocks(B)
+  return BlockDiagonal([a[i]\b[i] for i=1:N])
+ end
+ """
+ generates a linear map equivalent to inv(A)
+ for a block diagonal matrix, assuming dimensions
+ are all the same. This is way faster than default
+ method in BlockDiagonals
+ """
+ function linmap_blkdiag_cholesky(A)
+   q = nblocks(A)
+   n,n_=size(A)
+   @assert n%q == 0
+   p = n÷q
+   F = cholesky(A)
+   L = blocks(F.L)
+   function amul!(y,x)
+    x = reshape(x,p,q) 
+    y = reshape(y,p,q)
+    z = zeros(eltype(x),p)
+    # note to self: implementing this with in place backward substitution
+    # did not work for some reason
+    for i=1:q
+     z .= L[i]\x[:,i]
+     y[:,i] .= L[i]'\z
+    end
+   end
+   return LinearMap{ComplexF64}(amul!,amul!,n,n,ismutating=true)
+ end
  """
   Construct the block matrix representation of the matrix E = I + ρ^-1 A M^{-1} A^*
   (this can be expensive, but only needs to be done once)
@@ -389,20 +428,20 @@ module DiffractogramImaging
    
   # multiply L^-1 A^* (forward substitution)
   u = VectorBlockDiag{T}(undef,N)
-  u[1] = CD[1].L\(a[1]')
+  u[1] = blkdiag_ldiv(CD[1].L,a[1]')
   for i=2:N
-   u[i] = CD[i].L\(a[i]' - CL[i-1]*u[i-1])
+   u[i] = blkdiag_ldiv(CD[i].L,a[i]' - CL[i-1]*u[i-1])
   end
 
   # multiply by L^* (backward substituion)
   y = VectorBlockDiag{T}(undef,N)
-  y[N] = CD[N].U\u[N]
+  y[N] = blkdiag_ldiv(CD[N].U,u[N])
   for i=N-1:-1:1
-   y[i] = CD[i].U\(u[i] - CL[i]'*y[i+1])
+   y[i] = blkdiag_ldiv(CD[i].U,u[i] - CL[i]'*y[i+1])
   end
 
   # multiply on the left by A
-  E = zero(a[1])
+  E = BlockDiagonal([zeros(T,p1*p2,p1*p2) for i=1:q1*q2])
   for i=1:N
    E += a[i]*y[i]
   end
@@ -432,10 +471,9 @@ module DiffractogramImaging
   E = BlockDiagonal_E(a,ρ,p1,p2,q1,q2)
 
   # precompute Cholesky factor of E
-  Einv = cholesky(E)
+  Einv = linmap_blkdiag_cholesky(E)
 
-  # this saves 4 applications of Q that cancel out when calculating the SMW
-  # formula
+  # this saves 4 applications of Q that cancel out in SMW
   Â =  linmap_blkdiag_hcat(a)
   QA = Â*Q_N # == Q*A
   #B = [ Q'*QA
@@ -447,7 +485,7 @@ module DiffractogramImaging
   # this is where the Sherman-Morrison-Woodbury formula is used
   function mul!(y,x)
    u = (1/ρ)*Minv*(QA'*Q*x[1:nu] + sqrt(ρ)*R'*x[nu .+ (1:ny)]) # = (1/ρ)*Minv*B'*x
-   y .= u - (1/ρ)*Minv*QA'*(Einv\(QA*u))
+   y .= u - (1/ρ)*Minv*QA'*Einv*QA*u
   end
 
   mulh!(y,x) = @error("not implemented")
@@ -489,6 +527,7 @@ module DiffractogramImaging
   auglag(u,z,y) = norm(A*u-v)^2/2 + norm(z,1) + (ρ/2)*norm(R*u-z)^2 + y'*(R*u-z)
 
   u = u0; z = 0*R*u; y = 0*z
+
   #B = [ A
   #      ρ^(1/2)*R]
   obj = residuals = auglags = []
@@ -501,8 +540,8 @@ module DiffractogramImaging
       # solve augmented least squares problem
       b = [v
            ρ^(1/2)*(z - y/ρ)]
-      u .= pinvB*b
-      u = (A'*A + ρ*R)\(A'*v + ρ*z - y)
+      #u = (A'*A + ρ*R)\(A'*v + ρ*z - y)
+      u .= real.(pinvB*b)
 
       # solve L2 regularized L1 problem
       ru = R*u
@@ -513,7 +552,7 @@ module DiffractogramImaging
 
       # dual update
       y .+= ρ*(ru - z)
-      verbose && println("auglag = ",auglag(u,z,y)," objfun = ",objfun(u,z)," res = ",residual(u,z))
+      #verbose && println("auglag = ",auglag(u,z,y)," objfun = ",objfun(u,z)," res = ",residual(u,z))
       verbose && push!(obj,objfun(u,z))
       verbose && push!(residuals,residual(u,z))
       verbose && push!(auglags,auglag(u,z,y))
@@ -525,8 +564,8 @@ module DiffractogramImaging
   takes a kernel k and ADMM parameter ρ and does preliminary calculations
   that can be shared between several ADMM calls with same ρ
  """
- function prep_reconstruction(k,p1,q1,p2,q2,N,ρ)
-  kn1,kn2,kp1,kp2,kN = size(psf)
+ function prep_reconstruction(k,p1,p2,q1,q2,N,ρ)
+  kn1,kn2,kp1,kp2,kN = size(k)
   @assert kn1 % p1 == 0 && kn2 % p2 == 0
   @assert kp1 == p1 && kp2 == p2
   @assert kN == N
@@ -537,9 +576,12 @@ module DiffractogramImaging
   k_ = zeros(n1,n2,p1,p2,N)
   k_[1:kn1,1:kn2,:,:,:] = k
 
+  Q  = linmap_Q(ComplexF64,p1,p2,q1,q2)
+  QN = linmap_Q_N(ComplexF64,p1,p2,q1,q2,N) 
+
   # prepare block matrix representation of PSF
   a = [ pcc2d_to_BlockDiagonal(k_[:,:,:,:,iw]) for iw=1:N]
-  A = linmap_blkdiag_hcat(a)
+  A = Q'*linmap_blkdiag_hcat(a)*QN
 
   # regularization matrix
   R = linmap_R(n1,n2,N)
@@ -557,16 +599,18 @@ module DiffractogramImaging
   pinvB = linmap_augmented_ls_solver(p1,p2,q1,q2,a,ρ)
 
   return (A=A,R=R,pinvB=pinvB,ρ=ρ,resmap=resmap,
-          p1=p1,q1=q1,p2=p2,q2=q2,N=N)
+          p1=p1,p2=p2,q1=q1,q2=q2,N=N)
  end
 
  function do_reconstruction(b,prep,α,β,γ,x0=[];kwargs...)
-  @assert length(b) == prep.n1*prep.n2
+  n1 = prep.p1*prep.q1
+  n2 = prep.p2*prep.q2
+  @assert length(b) == n1*n2
   # initial guess
   if isempty(x0)
-   u0 = zeros(prep.n1*prep.n2*prep.N)
+   u0 = zeros(Float64,n1*n2*prep.N)
   else
-   @assert length(x0) == prep.n1*prep.n2*prep.N
+   @assert length(x0) == n1*n2*prep.N
    u0 = vec(x0)
   end
   αs = [α,α,β,γ]
