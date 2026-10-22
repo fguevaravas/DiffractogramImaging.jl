@@ -289,11 +289,35 @@ module DiffractogramImaging
 
   return LinearMap{ComplexF64}(amul!,amul!,N*n1*n2,N*n1*n2,ismutating=true)
  end 
+ """
+  Converts a vector of blocktridiagonal matrices to a linear map.
+  All block tridiagonal matrices are assumed to be square and of the same size
+  Inputs
+   a an array of block tridiagonal matrices
+ """
+ function linmap_blkdiag_hcat(a)
+  N = length(a)
+  n = size(a[1],1)
+  function amul!(y,x)
+   x = reshape(x,n,N)
+   y .= 0
+   for i=1:N
+    y .+= a[i]*x[:,i]
+   end
+  end
+  function amulh!(y,x)
+   y = reshape(y,n,N)
+   for i=1:N
+    y[:,i] .= a[i]'*x
+   end
+  end
+  return LinearMap{ComplexF64}(amul!,amulh!,n,N*n,ismutating=true)
+ end
  
  """
   Convert a regular convolution kernel to a periodic kernel
   Inputs
-   k  n1 x n2 regular convolution kerne
+   k  n1 x n2 regular convolution kernel
    k̃  n1 x n2 x p1 x p2 corresponding p1,p2 - periodic kernel
  """
  function rk_to_pcc2d(k,p1,p2,q1,q2)
@@ -412,7 +436,7 @@ module DiffractogramImaging
 
   # this saves 4 applications of Q that cancel out when calculating the SMW
   # formula
-  Â =  hcat([a[i] for i=1:N]...)
+  Â =  linmap_blkdiag_hcat(a)
   QA = Â*Q_N # == Q*A
   #B = [ Q'*QA
   #      sqrt(ρ)*R ]
@@ -446,11 +470,11 @@ module DiffractogramImaging
     u0    initial guess for u
     pinvB least square solver for augmented B = [A; sqrt(ρ)*R]
     ρ      augmented Lagrangian parameter, the larger the closer z tracks R*u
-    Niter (default 10) max number of iterations
+    maxiter (default 10) max number of iterations
     verbose (defaults false) whether to collect convergence stats
     check_convergence function (u,z,y) -> Boolean that indicates whether
                       we should stop iterations. the default behavior is
-                      to run for max number of iterations Niter
+                      to run for max number of iterations maxiter
 
   Outputs: (named tuple)
     u         solution u
@@ -459,7 +483,7 @@ module DiffractogramImaging
     obj       objective function record
     residuals residual record
  """
- function admm_solver(A,v,u0,ρ,R,resmap,αs,pinvB;Niter=10,verbose=false,check_convergence=(u,z,y)->false)
+ function admm_solver(A,v,u0,ρ,R,resmap,αs,pinvB;maxiter=10,verbose=false,check_convergence=(u,z,y)->false)
   objfun(u,z) = norm(A*u-v)^2/2 + norm(z,1)
   residual(u,z) = norm(R*u-z)^2
   auglag(u,z,y) = norm(A*u-v)^2/2 + norm(z,1) + (ρ/2)*norm(R*u-z)^2 + y'*(R*u-z)
@@ -473,7 +497,7 @@ module DiffractogramImaging
   verbose && (auglags = [ auglag(u,z,y)])
 
   #println("at 0 ",auglag(u,z,y)," ",objfun(u,z)," ",residual(u,z))
-  for j=1:Niter
+  for j=1:maxiter
       # solve augmented least squares problem
       b = [v
            ρ^(1/2)*(z - y/ρ)]
@@ -497,6 +521,56 @@ module DiffractogramImaging
   end
   return (u=u,z=z,y=y,obj=obj,residuals=residuals,auglags=auglags)
  end
- 
+ """
+  takes a kernel k and ADMM parameter ρ and does preliminary calculations
+  that can be shared between several ADMM calls with same ρ
+ """
+ function prep_reconstruction(k,p1,q1,p2,q2,N,ρ)
+  kn1,kn2,kp1,kp2,kN = size(psf)
+  @assert kn1 % p1 == 0 && kn2 % p2 == 0
+  @assert kp1 == p1 && kp2 == p2
+  @assert kN == N
+  n1 = p1*q1; n2 = p2*q2
+  @assert kn1 <= n1 && kn2 <= n2
+
+  # zero pad PSF
+  k_ = zeros(n1,n2,p1,p2,N)
+  k_[1:kn1,1:kn2,:,:,:] = k
+
+  # prepare block matrix representation of PSF
+  a = [ pcc2d_to_BlockDiagonal(k_[:,:,:,:,iw]) for iw=1:N]
+  A = linmap_blkdiag_hcat(a)
+
+  # regularization matrix
+  R = linmap_R(n1,n2,N)
+
+  # indices corresponding to each regularization parameter
+  #
+  #   α penalizes TV in space, 
+  #   β penalizes TV in wavelength, 
+  #   γ penalizes l1 norm
+  #
+  # order: α, α, β, γ
+  resmap = residual_indices(n1,n2,N) 
+
+  # prepare augmented least squares solver
+  pinvB = linmap_augmented_ls_solver(p1,p2,q1,q2,a,ρ)
+
+  return (A=A,R=R,pinvB=pinvB,ρ=ρ,resmap=resmap,
+          p1=p1,q1=q1,p2=p2,q2=q2,N=N)
+ end
+
+ function do_reconstruction(b,prep,α,β,γ,x0=[];kwargs...)
+  @assert length(b) == prep.n1*prep.n2
+  # initial guess
+  if isempty(x0)
+   u0 = zeros(prep.n1*prep.n2*prep.N)
+  else
+   @assert length(x0) == prep.n1*prep.n2*prep.N
+   u0 = vec(x0)
+  end
+  αs = [α,α,β,γ]
+  admm_solver(prep.A,b,u0,prep.ρ,prep.R,prep.resmap,αs,prep.pinvB;kwargs...)
+ end
 
 end#module

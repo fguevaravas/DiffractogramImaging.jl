@@ -211,6 +211,25 @@ function test_E_full(p1,p2,q1,q2,N,ρ=5)
 
 end
 
+# ONLY small sizes
+function test_linmap_blkdiag_hcat(p,q,N)
+ n = p*q
+ a = [ BlockDiagonal([ randn(p,p) + im*randn(p,p) for j=1:q]) for i=1:N]
+ A = hcat(a...)
+ la = DI.linmap_blkdiag_hcat(a)
+
+ x = randn(N*n) + im*randn(N*n)
+ y1 = la*x
+ y2 = A*x
+ @test relerr(y1,y2) ≈ 0 atol=1e-10
+ 
+
+ y = randn(n) + 1im*randn(n)
+ x1 = la'*y
+ x2 = A'*y
+ @test relerr(x1,x2) ≈ 0 atol=1e-10
+end
+
 # this is only for small sizes
 function test_R(n1,n2,N)
  R1 = DI.linmap_R(n1,n2,N)
@@ -255,7 +274,7 @@ end
 
  # α = 0.05*norm(A'*d,Inf) and ρ = 0.05 seem to do a good job with Lasso
 function test_admm_solver()
- α,ρ,noise,Niter = 0.01,2,1e-3,10
+ α,ρ,noise,maxiter = 0.01,2,1e-3,10
  n,m = 120,512
  p = 20 # number of samples 
  Random.seed!(17)
@@ -273,7 +292,7 @@ function test_admm_solver()
  B = [A;ρ^(1/2)*R]
  pinvB = pinv(B)
  αs = [α]; resmap = [1:m] # One single l1 term
- r = DI.admm_solver(A,d,u0,ρ,R,resmap,αs,pinvB,verbose=false,Niter=20)
+ r = DI.admm_solver(A,d,u0,ρ,R,resmap,αs,pinvB,verbose=false,maxiter=20)
  @test all(findall(abs.(xtrue).>0.5) .== findall(abs.(r.u).>0.5))
 end
 
@@ -320,6 +339,13 @@ test_cases = [
   (n=(32,27),p=(32,27)) ]
 
 # Actually run the tests
+@testset "testing hcat for blk diagonals" begin
+ test_linmap_blkdiag_hcat(3,4,4)
+ test_linmap_blkdiag_hcat(3,4,1)
+ test_linmap_blkdiag_hcat(3,1,4)
+ test_linmap_blkdiag_hcat(3,1,1)
+end
+
 @testset "testing Q" begin
  for c in test_cases
   q = c.n .÷ c.p
@@ -411,6 +437,8 @@ end
   ρ = 5
   test_augmented_ls_solver(3,4,2,3,2,ρ)
   test_augmented_ls_solver(3,4,2,3,4,ρ)
+
+  # do mock reconstruction ?
 end
 
 
