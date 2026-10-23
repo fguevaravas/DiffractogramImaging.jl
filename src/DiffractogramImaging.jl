@@ -174,8 +174,16 @@ module DiffractogramImaging
  """
   identifies the residuals to indices
  """
- residual_indices(n1,n2,N) = [1:N,N.+(1:N),2N.+(1:N-1),(3N-1).+(1:N)]
-
+ function residual_indices(n1,n2,N) 
+  sz = [ n1*n2*N, n1*n2*N, n1*n2*(N-1), n1*n2*N]
+  ptr = 0
+  res = Vector{StepRange{Int64, Int64}}(undef,length(sz))
+  for i=1:length(sz)
+   res[i] = ptr .+ (1:sz[i])
+   ptr += sz[i]
+  end
+  return res
+ end
  """
  filter associated with derivative operator of a n-periodic signal
  along the dimension specified in dim
@@ -493,6 +501,14 @@ module DiffractogramImaging
   return LinearMap{ComplexF64}(mul!,mulh!,N*n1*n2,4N*n1*n2,ismutating=true)
  end
 
+ function apply_resmap(resmap,αs,x)
+  y = similar(x)
+  for (iα,α) ∈ enumerate(αs)
+   y[resmap[iα]] = α*x[resmap[iα]]
+  end
+  return y
+ end
+
  shrink(b,μ) = sign(b)*max(abs(b)-μ,0) # soft thresholding
  """
   Use ADMM to solve
@@ -521,34 +537,27 @@ module DiffractogramImaging
     obj       objective function record
     residuals residual record
  """
- function admm_solver(A,v,u0,ρ,R,resmap,αs,pinvB;maxiter=10,verbose=false,check_convergence=(u,z,y)->false)
-  objfun(u,z) = norm(A*u-v)^2/2 + norm(z,1)
+ function admm_solver(A,v,u0,ρ,R,resmap,αs,pinvB;maxiter=10,verbose=false,check_convergence=(j,u,z,y)->false)
+  wtl1(z) = sum(apply_resmap(resmap,αs,abs.(z)))
+  objfun(u,z) = norm(A*u-v)^2/2 + wtl1(z)
   residual(u,z) = norm(R*u-z)^2
-  auglag(u,z,y) = norm(A*u-v)^2/2 + norm(z,1) + (ρ/2)*norm(R*u-z)^2 + y'*(R*u-z)
+  auglag(u,z,y) = norm(A*u-v)^2/2 + wtl1(z) + (ρ/2)*norm(R*u-z)^2 + y'*(R*u-z)
 
-  u = u0; z = 0*R*u; y = 0*z
+  u = u0; z = 0*real.(R*u); y = 0*z
 
-  #B = [ A
-  #      ρ^(1/2)*R]
-  obj = residuals = auglags = []
-  verbose && (obj       = [ objfun(u,z) ])
-  verbose && (residuals = [ residual(u,z)])
-  verbose && (auglags = [ auglag(u,z,y)])
+  obj = []; residuals = []; auglags = []
 
-  #println("at 0 ",auglag(u,z,y)," ",objfun(u,z)," ",residual(u,z))
   for j=1:maxiter
       # solve augmented least squares problem
       b = [v
            ρ^(1/2)*(z - y/ρ)]
-      #u = (A'*A + ρ*R)\(A'*v + ρ*z - y)
       u .= real.(pinvB*b)
 
       # solve L2 regularized L1 problem
-      ru = R*u
+      ru = real.(R*u)
       for (iα,α) ∈ enumerate(αs)
        z[resmap[iα]] .= shrink.(ru[resmap[iα]]+y[resmap[iα]]/ρ,α/ρ)
       end
-      #println("shk ",auglag(u,z,y)," ",objfun(u,z)," ",residual(u,z))
 
       # dual update
       y .+= ρ*(ru - z)
@@ -556,7 +565,7 @@ module DiffractogramImaging
       verbose && push!(obj,objfun(u,z))
       verbose && push!(residuals,residual(u,z))
       verbose && push!(auglags,auglag(u,z,y))
-      check_convergence(u,z,y) && break
+      check_convergence(j,u,z,y) && break
   end
   return (u=u,z=z,y=y,obj=obj,residuals=residuals,auglags=auglags)
  end
