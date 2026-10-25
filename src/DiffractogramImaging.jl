@@ -1,5 +1,5 @@
 module DiffractogramImaging
- using LinearMaps, FFTW, LinearAlgebra, BlockDiagonals,Random
+ using LinearMaps, FFTW, LinearAlgebra, BlockDiagonals, Random
  ⊗ = LinearAlgebra.kron 
  fftwComplex = FFTW.fftwComplex
  
@@ -561,7 +561,6 @@ module DiffractogramImaging
 
       # dual update
       y .+= ρ*(ru - z)
-      #verbose && println("auglag = ",auglag(u,z,y)," objfun = ",objfun(u,z)," res = ",residual(u,z))
       verbose && push!(obj,objfun(u,z))
       verbose && push!(residuals,residual(u,z))
       verbose && push!(auglags,auglag(u,z,y))
@@ -624,6 +623,40 @@ module DiffractogramImaging
   end
   αs = [α,α,β,γ]
   admm_solver(prep.A,b,u0,prep.ρ,prep.R,prep.resmap,αs,prep.pinvB;kwargs...)
+ end
+
+ """
+ Generate a spatially varying periodic random psf of size p.*q and period p.
+ The PSF has support sz and `nw` wavelengths.
+ Returns a 5D array of size `(q1*p1,q2*p2,p1,p2,nw)`.
+ """
+ function psf_rand(p,q,sz,nw,origin=(0,0))
+  n = q.*p
+  psf = zeros(n...,p...,nw)
+  offset = zeros(Int,2)
+  for iw=1:nw, i1=1:p[1], i2=1:p[2]
+   offset = origin .+ (i1-1,i2-1) .- sz.÷2
+   z = rand(sz...); z = z/sum(z)
+   psf[mod1.(offset[1] .+ (1:sz[1]),n[1]),
+       mod1.(offset[2] .+ (1:sz[2]),n[2]),
+       i1,i2,iw] = z;
+  end
+  return psf
+ end
+
+ """
+  zero pad a PSF and add offset. Offset is measured in periods to guarantee
+  invariance
+ """
+ function psf_zeropad(k,q1,q2,qoffset=(0,0))
+  kn1,kn2,p1,p2,N = size(k)
+  @assert kn1%p1 == 0 && kn2%p2==0
+  @assert q1*p1 >= kn1 && q2*p2 >= kn2
+  n1=p1*q1; n2=p2*q2 # dimensions of new PSF
+  k_ = zeros(n1,n2,p1,p2,N)
+  k_[mod1.(qoffset[1]*p1 .+ (1:kn1),n1),
+     mod1.(qoffset[2]*p2 .+ (1:kn2),n2),:,:,:] .= k
+  return k_
  end
 
 end#module

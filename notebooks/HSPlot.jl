@@ -8,7 +8,8 @@ that handles hyperspectral image databases
 module HSPlot
 
 using PyPlot, LinearAlgebra, MAT
-import Dierckx, Interpolations
+import Dierckx
+using Interpolations
 
 # bayer_simple, lin2012xyz2e, sbrgb10w, xyz2rgb
 include("colorcurves.jl")
@@ -40,7 +41,7 @@ X = loadhsdb(manchester2002,"scene5",sz=(128,128),ws=ws);
 imshow(hsi2rgb(X,ws=ws))
 ```
 """
-function hsi2rgb(hs;mode="xyz",gamma=false,ws=[],rescale=true)
+function hsi2rgb(hs;mode="xyz",gamma=true,ws=[],rescale=true)
 
     Nx,Ny,Nw = size(hs);
     if (isempty(ws))
@@ -320,6 +321,15 @@ function save_hsi_sep(v,ws,s::Tuple{Int,Int},filename::String)
     end
     I = max.(I,0) / maximum(I)
     imsave(filename,I,vmin=0,vmax=1,cmap="gray")
+end
+
+function sre_opt(ws,sp,wsr,spr)
+   spri = extrapolate(interpolate((wsr,),spr,Gridded(Linear())),0)
+   spref = spri(ws)
+   # optimal normalization
+   spref /= maximum(spref)
+   s = dot(sp,spref)/dot(sp,sp)
+   return 100*norm(s*sp - spref)/sqrt(length(ws))
 end
 
 end
