@@ -36,16 +36,16 @@ end
 
 # only small sizes
 function test_Q_N(p,q,N)
- Q = DI.linmap_Q_N(p...,q...,N)
- Q_ = I(N) ⊗ DI.linmap_Q(p...,q...)
- @test norm(Matrix(Q) - Matrix(Q_)) ≈ 0 atol=1e-10
+ Q = Matrix(DI.linmap_Q_N(p...,q...,N))
+ Q_ = I(N) ⊗ Matrix(DI.linmap_Q(p...,q...))
+ @test norm(Q - Q_) ≈ 0 atol=1e-10
 end
 
 # only small sizes
 function test_F_N(n,N)
- F = DI.linmap_F_N(n...,N)
- F_ = I(N) ⊗ DI.linmap_F(n...)
- @test norm(Matrix(F) - Matrix(F_)) ≈ 0 atol=1e-10
+ F = Matrix(DI.linmap_F_N(n...,N))
+ F_ = I(N) ⊗ Matrix(DI.linmap_F(n...))
+ @test norm(F - F_) ≈ 0 atol=1e-10
 end
 
 # use only for small sizes: tests convolution theorem

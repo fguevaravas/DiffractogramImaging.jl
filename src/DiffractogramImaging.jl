@@ -17,7 +17,7 @@ module DiffractogramImaging
   function Qmul!(y,x)
    x = reshape(x,p1,q1,p2,q2)
    y = reshape(y,p1,p2,q1,q2)
-   x̂ = fft(x,(2,4))/sqrt(q1*q2)
+   x̂ = fft(x,(2,4))
    permutedims!(y,x̂,(1,3,2,4))
    return vec(y)
   end
@@ -27,10 +27,9 @@ module DiffractogramImaging
    x = reshape(x,p1,q1,p2,q2)
    permutedims!(x,y,(1,3,2,4))
    bfft!(x,(2,4))
-   x./=sqrt(q1*q2)
    return vec(x)
   end
-  return LinearMap{T}(Qmul!,Qmulh!,n1*n2,n1*n2,ismutating=true)
+  return LinearMap{T}(Qmul!,Qmulh!,n1*n2,n1*n2,ismutating=true)/sqrt(q1*q2)
  end
  linmap_Q(p1,p2,q1,q2) = linmap_Q(ComplexF64,p1,p2,q1,q2) 
  
@@ -42,7 +41,7 @@ module DiffractogramImaging
   function Qmul!(y,x)
    x = reshape(x,p1,q1,p2,q2,N)
    y = reshape(y,p1,p2,q1,q2,N)
-   x̂ = fft(x,(2,4))/sqrt(q1*q2)
+   x̂ = fft(x,(2,4))
    permutedims!(y,x̂,(1,3,2,4,5))
    return vec(y)
   end
@@ -52,10 +51,9 @@ module DiffractogramImaging
    x = reshape(x,p1,q1,p2,q2,N)
    permutedims!(x,y,(1,3,2,4,5))
    bfft!(x,(2,4))
-   x./=sqrt(q1*q2)
    return vec(x)
   end
-  return LinearMap{T}(Qmul!,Qmulh!,n1*n2*N,n1*n2*N,ismutating=true)
+  return LinearMap{T}(Qmul!,Qmulh!,n1*n2*N,n1*n2*N,ismutating=true)/sqrt(q1*q2)
  end
  linmap_Q_N(p1,p2,q1,q2,N) = linmap_Q_N(ComplexF64,p1,p2,q1,q2,N) 
 
@@ -70,7 +68,7 @@ module DiffractogramImaging
   function Fmul!(y,x)
    y = reshape(y,n1,n2)
    x = reshape(x,n1,n2)
-   y .= x/sqrt(n1*n2)
+   y .= x
    fft!(y)
    return vec(y)
   end
@@ -78,11 +76,11 @@ module DiffractogramImaging
   function Fmulh!(y,x)
    y = reshape(y,n1,n2)
    x = reshape(x,n1,n2)
-   y .= x/sqrt(n1*n2)
+   y .= x
    bfft!(y)
    return vec(y)
   end
-  return LinearMap{T}(Fmul!,Fmulh!,n1*n2,n1*n2,ismutating=true)
+  return LinearMap{T}(Fmul!,Fmulh!,n1*n2,n1*n2,ismutating=true)/sqrt(n1*n2)
  end
  linmap_F(n1,n2) = linmap_F(ComplexF64,n1,n2)
 
@@ -93,7 +91,7 @@ module DiffractogramImaging
   function Fmul!(y,x)
    y = reshape(y,n1,n2,N)
    x = reshape(x,n1,n2,N)
-   y .= x/sqrt(n1*n2)
+   y .= x
    fft!(y,(1,2))
    return vec(y)
   end
@@ -101,11 +99,11 @@ module DiffractogramImaging
   function Fmulh!(y,x)
    y = reshape(y,n1,n2,N)
    x = reshape(x,n1,n2,N)
-   y .= x/sqrt(n1*n2)
+   y .= x
    bfft!(y,(1,2))
    return vec(y)
   end
-  return LinearMap{T}(Fmul!,Fmulh!,n1*n2*N,n1*n2*N,ismutating=true)
+  return LinearMap{T}(Fmul!,Fmulh!,n1*n2*N,n1*n2*N,ismutating=true)/sqrt(n1*n2)
  end
  linmap_F_N(n1,n2,N) = linmap_F_N(ComplexF64,n1,n2,N)
 
@@ -493,7 +491,9 @@ module DiffractogramImaging
   # this is where the Sherman-Morrison-Woodbury formula is used
   function mul!(y,x)
    u = (1/ρ)*Minv*(QA'*Q*x[1:nu] + sqrt(ρ)*R'*x[nu .+ (1:ny)]) # = (1/ρ)*Minv*B'*x
-   y .= u - (1/ρ)*Minv*QA'*Einv*QA*u
+   #y .= u - (1/ρ)*Minv*QA'*Einv*QA*u
+   y .= - (1/ρ)*Minv*QA'*Einv*QA*u
+   y.+= u
   end
 
   mulh!(y,x) = @error("not implemented")
@@ -543,7 +543,7 @@ module DiffractogramImaging
   residual(u,z) = norm(R*u-z)^2
   auglag(u,z,y) = norm(A*u-v)^2/2 + wtl1(z) + (ρ/2)*norm(R*u-z)^2 + y'*(R*u-z)
 
-  u = u0; z = 0*real.(R*u); y = 0*z
+  u = u0; z = 0*real.(R*u); y = 0*z; temp = 0*z;
 
   obj = []; residuals = []; auglags = []
 
@@ -555,8 +555,9 @@ module DiffractogramImaging
 
       # solve L2 regularized L1 problem
       ru = real.(R*u)
+      temp .= ru + y/ρ
       for (iα,α) ∈ enumerate(αs)
-       z[resmap[iα]] .= shrink.(ru[resmap[iα]]+y[resmap[iα]]/ρ,α/ρ)
+       z[resmap[iα]] .= shrink.(temp[resmap[iα]],α/ρ)
       end
 
       # dual update
