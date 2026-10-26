@@ -2,6 +2,7 @@
 BlockDiagonals = "0a1fb500-61f7-11e9-3c65-f5ef3456f9f0"
 Dierckx = "39dd38d3-220a-591b-8e3c-4c3a8c710a94"
 DiffractogramImaging = "e7d89807-3c87-483b-907c-b23c4404fb47"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 Glob = "c27321d9-0574-5035-807b-f59d2c89b15c"
 IJulia = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
