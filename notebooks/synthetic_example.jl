@@ -13,6 +13,11 @@ include("HSPlot.jl");
 # Optical Society of America A, 23,
 # 2359-2372](https://doi.org/10.1364/JOSAA.23.002359). Please edit below to reflect
 # path to this .mat file.
+# 
+# The `lazy` variable below works as follows. If true assumes reconstruction has
+# already been computed and saved to `synth_Xrec.mat` (in the current working
+# directory). If false, recomputes reconstruction and saves to `synth_Xrec.mat`
+lazy = true 
 file = joinpath(homedir(),"lumosdata/naturalhsi2002/scene5.mat")
 v = matread(file);
 wsraw = range(410,710,length=31); 
@@ -83,27 +88,41 @@ Y = Ynoisy / norm(Ynoisy,Inf);
 Xrgb = HSPlot.hsi2rgb(Xtrue,ws=ws); 
 imsave("synth_Xtrue_rgb.png",Xrgb,); 
 imsave("synth_Y.png",Y,cmap="gray"); 
+HSPlot.save_hsi_rgbsep(Xtrue,ws,x->"synth_Xtrue_sep_$(x).png")
+
 subplot(1,2,1)
 imshow(Xrgb); axis("equal"); axis("off")
 subplot(1,2,2)
 imshow(Y,cmap="gray"); axis("equal"); axis("off");
 
 # ## Reconstructions
-ρ,α,β,γ = 5e-3,5e-1,1e-5,1e-10 
+if !lazy
+  ρ,α,β,γ = 5e-3,5e-1,1e-5,1e-10 
+  x0 = 0*vec(Xtrue)
+  prep = DI.prep_reconstruction(k_,p...,q...,N,ρ)
+  @time res=DI.do_reconstruction(vec(Y),prep,α,β,γ,x0,maxiter=10,verbose=true)
+  Xrec = reshape(max.(res.u,0),n...,N);
+  MAT.matwrite("synth_Xrec.mat",
+         Dict("Xrec"=>Xrec,"auglags"=>res.auglags,"obj"=>res.obj,"residuals"=>res.residuals));
+else
+  xrf = MAT.matread("synth_Xrec.mat");
+  Xrec = xrf["Xrec"]
+  res = (obj=xrf["obj"],residuals=xrf["residuals"],auglags=xrf["auglags"])
+end;
 
-x0 = 0*vec(Xtrue)
-prep = DI.prep_reconstruction(k_,p...,q...,N,ρ)
-@time res=DI.do_reconstruction(vec(Y),prep,α,β,γ,x0,maxiter=10,verbose=true)
-Xrec = reshape(max.(res.u,0),n...,N)
+# ## Plotting
+figure()
+HSPlot.plothsi(Xrec,(2,5));
+axis("off");
+HSPlot.save_hsi_rgbsep(Xrec,ws,x->"synth_Xrec_sep_$(x).png")
 
-subplot(2,2,1)
-HSPlot.plothsi(Xrec,(4,4)); #colorbar()
-
-subplot(2,2,2)
-semilogy(res.obj,label="obj")
-semilogy(res.residuals,label="res")
-semilogy(abs.(res.auglags),label="lag")
+figure()
+semilogy(res.obj,label="objective")
+semilogy(res.residuals,label="residual")
+semilogy(abs.(res.auglags),label="Lagrangian")
+xlabel("iteration")
 legend()
+savefig("synth_convergence.pgf")
 
 
 # ## Plot reconstruction with and without spectrum samples
@@ -118,19 +137,43 @@ for (i,s) ∈ enumerate(sample_locs)
     text(s[2],s[1],"$i")
 end
 axis("equal"); axis("off");
-savefig("synth_Xrec_rgb_annotated.png")
+savefig("synth_Xrec_rgb_annotated.pgf")
 
 # ## Plot spectrum samples
-sres = zeros(length(sample_locs))
+ sres = zeros(length(sample_locs))
+figure(figsize=(3,3))
+tight_layout(pad=0)
 for (i,s) ∈ enumerate(sample_locs)
     strue=renorm(sample(Xtrue,s))
     srec=renorm(sample(Xrec,s))
     sres[i] = HSPlot.sre_opt(ws,srec,ws,strue)
-    subplot(2,3,i)
+    clf()
     plot(ws,strue)
     plot(ws,srec)
+    ylim(0,0.4)
+    axis("off")
+    savefig("synth_spec_$(i).pgf")
 end
 
 println("sres = ",sres)
 println("Average SRE = ",sum(sres)/length(sres))
+
+
+# ## Zoom regions
+zoomin = [ (offset=(65,300), extent=(128,128)),
+           (offset=(190,90), extent=(128,128)),
+           (offset=(252,340), extent=(128,128))]
+zoom(X,z) = X[z.offset[1] .+ (0:z.extent[1]-1),
+              z.offset[2] .+ (0:z.extent[2]-1),
+              :]
+for (iz,z) ∈ enumerate(zoomin)
+    Xtrue_zoom = zoom(Xtrue,z)
+    Xrec_zoom = zoom(Xrec,z)
+    Y_zoom = dropdims(zoom(Y,z),dims=3)
+    Xtrue_zoom_rgb = HSPlot.hsi2rgb(Xtrue_zoom,ws=ws);
+    Xrec_zoom_rgb = HSPlot.hsi2rgb(Xrec_zoom,ws=ws);
+    imsave("synth_Xtrue_zoom$(iz)_rgb.png",Xtrue_zoom_rgb)
+    imsave("synth_Xrec_zoom$(iz)_rgb.png",Xrec_zoom_rgb)
+    imsave("synth_Y_zoom$(iz).png",Y_zoom,cmap="gray")
+end
 
