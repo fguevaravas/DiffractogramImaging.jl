@@ -116,13 +116,13 @@ HSPlot.plothsi(Xrec,(2,5));
 axis("off");
 HSPlot.save_hsi_rgbsep(Xrec,ws,x->"synth_Xrec_sep_$(x).png")
 
-figure()
+figure(figsize=(3,3))
 semilogy(res.obj,label="objective")
 semilogy(res.residuals,label="residual")
 semilogy(abs.(res.auglags),label="Lagrangian")
 xlabel("iteration")
 legend()
-savefig("synth_convergence.pgf")
+savefig("synth_convergence.pgf",bbox_inches="tight")
 
 
 # ## Plot reconstruction with and without spectrum samples
@@ -140,20 +140,22 @@ axis("equal"); axis("off");
 savefig("synth_Xrec_rgb_annotated.pgf")
 
 # ## Plot spectrum samples
- sres = zeros(length(sample_locs))
-figure(figsize=(3,3))
-tight_layout(pad=0)
+sres = zeros(length(sample_locs))
+subplots(5, 1, sharex=true,figsize=(2,5).*(3/5))
 for (i,s) ∈ enumerate(sample_locs)
     strue=renorm(sample(Xtrue,s))
     srec=renorm(sample(Xrec,s))
-    sres[i] = HSPlot.sre_opt(ws,srec,ws,strue)
-    clf()
+    sres[i] = HSPlot.sre_l1(ws,srec,ws,strue)
+    subplot(5,1,i)
     plot(ws,strue)
     plot(ws,srec)
     ylim(0,0.4)
-    axis("off")
-    savefig("synth_spec_$(i).pgf")
+    ylabel("loc. $i")
+    xticks([440,560,710])
+    yticks([])
 end
+xlabel("nm")
+savefig("synth_spec.pgf",bbox_inches="tight")
 
 println("sres = ",sres)
 println("Average SRE = ",sum(sres)/length(sres))

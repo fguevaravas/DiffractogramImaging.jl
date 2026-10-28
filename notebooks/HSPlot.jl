@@ -332,4 +332,13 @@ function sre_opt(ws,sp,wsr,spr)
    return 100*norm(s*sp - spref)/sqrt(length(ws))
 end
 
+function sre_l1(ws,sp,wsr,spr)
+   spri = extrapolate(interpolate((wsr,),spr,Gridded(Linear())),0)
+   spref = spri(ws)
+   # normalization using L1 norm
+   spref = spref/norm(spref,1)
+   spp = sp/norm(sp,1)
+   return 100*norm(spp - spref,1)/norm(spref,1)
+end
+
 end
