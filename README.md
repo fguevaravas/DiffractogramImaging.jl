@@ -35,3 +35,31 @@ can start with:
 jupyter nbconvert toconvert.ipynb --to asciidoc
 ```
 Then follow the simple format in `Literate.jl`.
+
+## Benchmarks
+The benchmarks require 30GB just for Julia, with memory usage going higher in the "preparation" phases. They were run on a 32GB machine. To run the benchmarks, in Julia cd to the directory `DiffractogramImaging.jl/benchmark`
+```
+]activate .
+include("run_benchmarks.jl")
+res = bench_all()
+```
+
+To reproduce the plots:
+```
+plot_all(res...)
+```
+
+The results can be saved using JLD2, which HDF5 based. For example we are using the file `bench.jld2`
+```
+using JLD2
+jldsave("bench.jld2";res)
+```
+
+Results can be loaded as follows. The instructions are written assuming this is a new Julia session. First cd to `DiffractogramImaging.jl/benchmark`
+```
+]activate .
+include("run_benchmarks.jl")
+using JLD2
+res=load("bench.jld2","res")
+plot_all(res...)
+```

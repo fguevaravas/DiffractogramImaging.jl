@@ -1,0 +1,9 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+DiffractogramImaging = "e7d89807-3c87-483b-907c-b23c4404fb47"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
+
+[sources]
+DiffractogramImaging = {path = ".."}
