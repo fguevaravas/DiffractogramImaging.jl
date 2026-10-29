@@ -341,4 +341,12 @@ function sre_l1(ws,sp,wsr,spr)
    return 100*norm(spp - spref,1)/norm(spref,1)
 end
 
+function sre_l2(ws,sp,wsr,spr)
+   spri = extrapolate(interpolate((wsr,),spr,Gridded(Linear())),0)
+   spref = spri(ws)
+   # normalization using L2 norm
+   spref = spref/norm(spref,2)
+   spp = sp/norm(sp,2)
+   return 100*norm(spp - spref,2)/norm(spref,2)
+end
 end

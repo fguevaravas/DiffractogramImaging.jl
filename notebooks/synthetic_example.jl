@@ -129,7 +129,7 @@ savefig("synth_convergence.pgf",bbox_inches="tight")
 sample_locs = [ (132,242), (195,242), (256,245), (332,341), (218,380) ]
 sample(X,i=(80,80),p=(8,8)) = 
    sum(X[i[1].+(1:p[1]),i[2].+(1:p[2]),:],dims=(1,2))[:]/prod(p)
-renorm(x) = x / norm(x,1)
+renorm(x) = x / norm(x,2)
 Xrec_rgb = HSPlot.hsi2rgb(Xrec,ws=ws);
 imsave("synth_Xrec_rgb.png",Xrec_rgb); 
 imshow(Xrec_rgb); 
@@ -145,7 +145,7 @@ subplots(5, 1, sharex=true,figsize=(2,5).*(3/5))
 for (i,s) ∈ enumerate(sample_locs)
     strue=renorm(sample(Xtrue,s))
     srec=renorm(sample(Xrec,s))
-    sres[i] = HSPlot.sre_l1(ws,srec,ws,strue)
+    sres[i] = HSPlot.sre_l2(ws,srec,ws,strue)
     subplot(5,1,i)
     plot(ws,strue)
     plot(ws,srec)
