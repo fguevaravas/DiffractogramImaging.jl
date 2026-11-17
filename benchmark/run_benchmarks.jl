@@ -76,11 +76,11 @@ function plot_bench_vary_n(res)
   ns = prod.(z[:,:n])
   for algo ∈ algos
     z = res[res.algo .== algo,:]
-    loglog(ns, times(z)/1e3, label=algo_legend[algo])
+    loglog(ns, times(z)/1e6, label=algo_legend[algo])
   end
   grid(true)
   xlabel(L"|n|")
-  ylabel(L"time ($\mu$s)")
+  ylabel("time (ms)")
   mysavefig("bench_vary_n_times")
 
   figure(2,figsize=figsize); clf()
@@ -97,11 +97,11 @@ function plot_bench_vary_nw(res)
   nws = z[:,:N]
   for algo ∈ algos
     z = res[res.algo .== algo,:]
-    loglog(nws, times(z)/1e3, label=algo_legend[algo])
+    loglog(nws, times(z)/1e6, label=algo_legend[algo])
   end
   grid(true)
   xlabel(L"N")
-  ylabel(L"time ($\mu$s)")
+  ylabel("time (ms)")
   mysavefig("bench_vary_nw_times")
 
   figure(2,figsize=figsize); clf()
